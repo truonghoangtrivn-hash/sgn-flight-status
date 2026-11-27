@@ -36,9 +36,15 @@
           <p class="text-xs sm:text-sm text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS</p>
         </div>
       </div>
+      
+      <!-- Nút Cập Nhật Ngay & Trạng thái -->
       <div class="mt-3 sm:mt-0 flex items-center space-x-2">
+        <button id="btnRefresh" onclick="triggerRefreshToday()" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-yellow-400 active:scale-95 transition shadow-sm cursor-pointer">
+          <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5"></i>
+          <span id="refreshText">Cập nhật hôm nay (D)</span>
+        </button>
         <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-          <span class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span> Tự động cập nhật
+          <span class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span> Tự động
         </span>
       </div>
     </div>
@@ -94,10 +100,10 @@
       </div>
     </div>
 
-    <!-- Thống kê nhanh -->
+    <!-- Thống kê nhanh & Thông báo cập nhật -->
     <div class="flex items-center justify-between mb-4 px-1">
       <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Đã sắp xếp theo giờ khởi hành / hạ cánh)
+        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Sắp xếp theo giờ)
       </div>
       <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
@@ -122,7 +128,7 @@
             </tr>
           </thead>
           <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
-            <!-- Dữ liệu render tự động -->
+            <!-- Render tự động -->
           </tbody>
         </table>
       </div>
@@ -134,7 +140,7 @@
 
   </main>
 
-  <!-- Firebase Web SDK -->
+  <!-- Firebase Web SDK & Logic -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -156,11 +162,11 @@
     let rawFlights = [];
 
     const datePicker = document.getElementById('datePicker');
-    // Mặc định lấy ngày hôm nay theo giờ địa phương
     const now = new Date();
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     datePicker.value = todayStr;
 
+    // Lắng nghe dữ liệu thời gian thực từ Firestore
     function listenToFlights(selectedDate) {
       document.getElementById('loadingStatus').classList.remove('hidden');
       const q = query(collection(db, "flights"), where("date", "==", selectedDate));
@@ -181,7 +187,6 @@
     function renderFlights() {
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
-      // 1. Lọc theo Chiều bay, Loại chuyến và Từ khóa tìm kiếm
       let filtered = rawFlights.filter(f => {
         const fDir = (f.direction || '').toUpperCase();
         const fType = (f.flight_type || '').toUpperCase();
@@ -198,7 +203,7 @@
         return matchDir && matchType && matchSearch;
       });
 
-      // 2. YÊU CẦU: TỰ ĐỘNG SẮP XẾP THEO THỜI GIAN SCHEDULED (TỪ SÁNG ĐẾN ĐÊM)
+      // Sắp xếp thời gian Scheduled tăng dần
       filtered.sort((a, b) => {
         const timeA = a.scheduled || '99:99';
         const timeB = b.scheduled || '99:99';
@@ -278,6 +283,7 @@
       });
     }
 
+    // Sự kiện đổi ngày trên ô lịch
     datePicker.addEventListener('change', (e) => {
       listenToFlights(e.target.value);
     });
@@ -300,6 +306,59 @@
       });
       document.getElementById(`btn-type-${type}`).className = 'type-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm';
       renderFlights();
+    };
+
+    // Hàm gọi nút Cập nhật hôm nay
+    window.triggerRefreshToday = async () => {
+      const btn = document.getElementById('btnRefresh');
+      const icon = document.getElementById('refreshIcon');
+      const text = document.getElementById('refreshText');
+
+      if (btn.disabled) return;
+
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      icon.classList.add('fa-spin');
+      text.innerText = 'Đang gửi lệnh...';
+
+      try {
+        const res = await fetch('/api/refresh', { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok) {
+          // Chuyển lịch về hôm nay để xem
+          if (datePicker.value !== todayStr) {
+            datePicker.value = todayStr;
+            listenToFlights(todayStr);
+          }
+
+          let countdown = 60;
+          const timer = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+              text.innerText = `Đang cào dữ liệu... (${countdown}s)`;
+            } else {
+              clearInterval(timer);
+              btn.disabled = false;
+              btn.classList.remove('opacity-75', 'cursor-not-allowed');
+              icon.classList.remove('fa-spin');
+              text.innerText = 'Cập nhật hôm nay (D)';
+            }
+          }, 1000);
+        } else {
+          alert('Lỗi: ' + (data.error || 'Không thể gửi lệnh cập nhật'));
+          btn.disabled = false;
+          btn.classList.remove('opacity-75', 'cursor-not-allowed');
+          icon.classList.remove('fa-spin');
+          text.innerText = 'Cập nhật hôm nay (D)';
+        }
+      } catch (err) {
+        alert('Lỗi kết nối máy chủ!');
+        btn.disabled = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        icon.classList.remove('fa-spin');
+        text.innerText = 'Cập nhật hôm nay (D)';
+      }
     };
 
     listenToFlights(todayStr);
