@@ -19,13 +19,13 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Đổi select và chờ phản hồi POST từ máy chủ VIAGS
+# Hàm đổi select và chờ hệ thống ASP.NET cập nhật
 def change_select(page, selector, target_val):
     current = page.locator(selector).input_value()
     if current != target_val:
         print(f"-> Đổi {selector} sang '{target_val}'...")
         try:
-            with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=25000):
+            with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
                 page.select_option(selector, value=target_val)
             time.sleep(3)
         except Exception:
@@ -65,7 +65,7 @@ def scrape_viags():
         print("2. Đang chọn Sân bay: Ho Chi Minh (SGN)...")
         change_select(page, SEL_ORIGIN, "SGN")
 
-        # 4 Tổ hợp cần lấy dữ liệu
+        # 4 Mục cần cào
         tasks = [
             {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
             {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
@@ -80,31 +80,30 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Chuyển loại chuyến và chiều bay
+            # Luôn đảm bảo sân bay là SGN
+            change_select(page, SEL_ORIGIN, "SGN")
             change_select(page, SEL_STATION, task["station"])
             change_select(page, SEL_TRIP, task["trip"])
             time.sleep(3)
 
-            # BƯỚC QUAN TRỌNG: BẤM NÚT 'LOAD MORE' LIÊN TỤC BẰNG LỆNH JS
+            # BẤM NÚT VÀNG 'LOAD MORE' - ĐỊNH VỊ CHÍNH XÁC .p-top1__btn1 .c-btn1
             load_count = 0
             for i in range(25):
-                # Kiểm tra nút vàng còn bấm được hay không
-                has_more = page.evaluate("""() => {
-                    const btn = document.querySelector('.c-btn1');
-                    if (!btn) return false;
-                    if (btn.classList.contains('hidden')) return false;
-                    const style = window.getComputedStyle(btn);
-                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                    
-                    // Thực hiện click vào nút
-                    btn.click();
-                    return true;
+                clicked = page.evaluate("""() => {
+                    // Định vị chính xác nút vàng Load more trong khung bảng
+                    const btn = document.querySelector('.p-top1__btn1 .c-btn1, .p-top1__btn1 span');
+                    if (btn && !btn.classList.contains('hidden')) {
+                        btn.scrollIntoView();
+                        btn.click();
+                        return true;
+                    }
+                    return false;
                 }""")
 
-                if has_more:
+                if clicked:
                     load_count += 1
                     print(f"   -> Bấm 'Load more' lần {load_count}...")
-                    time.sleep(1.5)
+                    time.sleep(1.8)
                 else:
                     print(f"   -> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
                     break
@@ -130,7 +129,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Nhận diện chuyến bay Vietnam Airlines
+                # Nhận diện chuyến bay của Vietnam Airlines
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -194,7 +193,6 @@ def scrape_viags():
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
@@ -206,7 +204,7 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY THẬT VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY VÀO FIREBASE! ===")
     else:
         print("Cảnh báo: Không có dữ liệu để lưu.")
 
