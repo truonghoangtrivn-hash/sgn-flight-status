@@ -2,9 +2,14 @@ name: Auto Scrape VIAGS Flights
 
 on:
   schedule:
-    # Chạy tự động mỗi giờ 1 lần
+    # Chạy tự động định kỳ mỗi giờ
     - cron: '0 * * * *'
-  workflow_dispatch: # Cho phép bấm chạy thử nghiệm thủ công bất kỳ lúc nào
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Chế độ cào (today_only hoặc both_days)'
+        required: false
+        default: 'both_days'
 
 jobs:
   scrape:
@@ -26,5 +31,6 @@ jobs:
       - name: Run Scraper
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SCRAPE_MODE: ${{ github.event.inputs.mode || 'both_days' }}
         run: |
           python scraper.py
