@@ -24,7 +24,6 @@ def select_dropdown(page, option_text):
         if select.count() > 0:
             select.select_option(label=option_text)
             page.wait_for_timeout(1500)
-            print(f"-> Đã chọn dropdown: {option_text}")
     except Exception as e:
         print(f"Lưu ý khi chọn {option_text}: {e}")
 
@@ -45,7 +44,6 @@ def scrape_viags():
         page = context.new_page()
 
         url = "https://www.viags.vn/en-US/flight-schedules"
-        print(f"Đang mở trang: {url}")
         page.goto(url, wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
 
@@ -60,7 +58,7 @@ def scrape_viags():
         ]
 
         for f_type, f_label, d_type, d_label in combinations:
-            print(f"\n--- Đang xử lý: {f_type} - {d_type} ---")
+            print(f"--- Đang lấy: {f_type} - {d_type} ---")
             select_dropdown(page, f_label)
             select_dropdown(page, d_label)
 
@@ -77,54 +75,51 @@ def scrape_viags():
                     break
 
             rows = page.locator("table tbody tr").all()
-            print(f"Số dòng trong bảng: {len(rows)}")
 
-            for idx, row in enumerate(rows):
-                # Lấy text từng cột
+            for row in rows:
                 cols = [td.inner_text().strip() for td in row.locator("td").all()]
-                if not cols or len(cols) < 4:
+                if not cols or len(cols) < 5:
                     continue
 
-                # In thử 2 dòng đầu để xem cấu trúc thực tế
-                if idx < 2:
-                    print(f"Mẫu dòng {idx + 1}: {cols}")
-
                 row_text = " ".join(cols).upper()
-
-                # Tìm mã chuyến bay dạng VN123, VN 1234, HVN...
                 match = re.search(r'\b(VN|HVN)\s*([0-9]{2,4})\b', row_text)
                 is_vna = "VIETNAM AIRLINES" in row_text or match is not None
 
                 if is_vna:
-                    flight_no = f"VN{match.group(2)}" if match else "VN---"
+                    # Lấy số hiệu chuyến bay
+                    flight_no = f"VN{match.group(2)}" if match else (cols[5] if len(cols) > 5 else "VN---")
                     
-                    # Trích xuất dữ liệu thông minh
+                    # Nơi đi / nơi đến phụ thuộc vào Chiều bay (Departure / Arrival)
+                    route = cols[3] if d_type == "Departure" else cols[2]
+
                     flight_data = {
                         "date": today_str,
-                        "scheduled": cols[0] if len(cols) > 0 else "",
-                        "estimated": cols[1] if len(cols) > 1 else "",
-                        "destination_or_from": cols[2] if len(cols) > 2 else "",
+                        "scheduled": cols[0] if len(cols) > 0 else "--:--",
+                        "estimated": cols[1] if len(cols) > 1 else "--:--",
+                        "from_city": cols[2] if len(cols) > 2 else "",
+                        "to_city": cols[3] if len(cols) > 3 else "",
+                        "route": route,
                         "airline": "Vietnam Airlines",
                         "flight_no": flight_no,
-                        "gate": cols[5] if len(cols) > 5 else "",
-                        "belt": cols[6] if len(cols) > 6 else "",
-                        "remarks": cols[7] if len(cols) > 7 else (cols[-1] if len(cols) > 3 else ""),
-                        "flight_type": f_type,
-                        "direction": d_type,
+                        "gate": cols[6] if len(cols) > 6 else "--",
+                        "belt": cols[7] if len(cols) > 7 else "--",
+                        "remarks": cols[8] if len(cols) > 8 else (cols[-1] if len(cols) > 4 else "Normal"),
+                        "flight_type": f_type,       # Domestic / International
+                        "direction": d_type,           # Departure / Arrival
                         "airport": "SGN",
+                        "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no.replace(' ', '')}",
                         "updated_at": firestore.SERVER_TIMESTAMP
                     }
                     all_flights.append(flight_data)
 
         browser.close()
 
-    print(f"\n===> TỔNG CỘNG LẤY ĐƯỢC: {len(all_flights)} CHUYẾN BAY VIETNAM AIRLINES TẠI SGN <===")
+    print(f"\n===> TỔNG CỘNG: {len(all_flights)} chuyến bay Vietnam Airlines.")
 
     if len(all_flights) > 0:
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Mã document duy nhất: VD: 2026-11-27_VN205_Departure
             doc_id = f"{flight['date']}_{flight['flight_no']}_{flight['direction']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight, merge=True)
@@ -135,7 +130,7 @@ def scrape_viags():
                 count = 0
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG TẤT CẢ VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU DỮ LIỆU CHUẨN XÁC VÀO FIREBASE! ===")
 
 if __name__ == "__main__":
     scrape_viags()
