@@ -29,21 +29,23 @@ def select_and_wait(page, selector, value):
         page.select_option(selector, value=value)
         time.sleep(4)
 
-# 2. Quy trình cào dữ liệu cho từng ngày và từng mục
+# 2. Quy trình cào dữ liệu SGN
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
     now_vn = datetime.now(tz_vn)
 
-    # Ngày hiện tại (D) và ngày mai (D+1)
     today_str = now_vn.strftime('%Y-%m-%d')
     tomorrow_str = (now_vn + timedelta(days=1)).strftime('%Y-%m-%d')
-    target_dates = [today_str, tomorrow_str]
 
-    print(f"=======================================================")
-    print(f" BẮT ĐẦU CÀO DỮ LIỆU TÂN SƠN NHẤT (SGN)")
-    print(f" DANH SÁCH NGÀY CẦN LẤY: {target_dates}")
-    print(f"=======================================================")
+    # Đọc chế độ từ GitHub Action (today_only hoặc both_days)
+    scrape_mode = os.environ.get("SCRAPE_MODE", "both_days")
+    if scrape_mode == "today_only":
+        target_dates = [today_str]
+        print(f">>> [CHẾ ĐỘ TỐC ĐỘ]: CHỈ CẬP NHẬT NGÀY HÔM NAY ({today_str}) <<<")
+    else:
+        target_dates = [today_str, tomorrow_str]
+        print(f">>> [CHẾ ĐỘ TIÊU CHUẨN]: CẬP NHẬT CẢ 2 NGÀY ({target_dates}) <<<")
 
     all_flights = []
 
@@ -72,14 +74,14 @@ def scrape_viags():
             print(f"#######################################################")
 
             for sec in sections:
-                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ TRANG MỚI: {sec['name']} ---")
+                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ TRANG: {sec['name']} ---")
 
                 page = context.new_page()
                 url = "https://www.viags.vn/en-US/flight-schedules"
                 page.goto(url, wait_until="networkidle", timeout=60000)
                 time.sleep(2)
 
-                # 1. Đặt ngày cần cào nếu khác ngày mặc định
+                # 1. Điền ngày cần cào
                 page.evaluate(f"""(targetDate) => {{
                     const dateInp = document.querySelector('{SEL_DATE}, [name$="datetimepicker1"]');
                     if (dateInp) {{
@@ -174,7 +176,7 @@ def scrape_viags():
                             remarks = "Normal"
 
                         flight_item = {
-                            "date": current_date, # Lưu đúng ngày (hôm nay hoặc ngày mai)
+                            "date": current_date,
                             "scheduled": col_map.get("scheduled", "--:--"),
                             "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
                             "destination_or_from": route,
@@ -199,11 +201,11 @@ def scrape_viags():
         browser.close()
 
     print(f"\n=======================================================")
-    print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY CHO 2 NGÀY (D và D+1)")
+    print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY THẬT SGN")
     print(f"=======================================================")
 
     if len(all_flights) > 0:
-        print("Đang dọn dẹp dữ liệu cũ của 2 ngày trong Firebase...")
+        print("Đang dọn dẹp dữ liệu cũ của các ngày này trong Firebase...")
         for d in target_dates:
             docs = db.collection("flights").where("date", "==", d).stream()
             for doc in docs:
@@ -212,7 +214,6 @@ def scrape_viags():
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
@@ -224,7 +225,7 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY D VÀ D+1 VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG VÀO FIREBASE! ===")
     else:
         print("Cảnh báo: Không có dữ liệu để lưu.")
 
