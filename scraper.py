@@ -19,18 +19,13 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm đổi select và chờ hệ thống ASP.NET nạp xong
-def change_select(page, selector, target_val):
+# Hàm đổi select và chờ hệ thống nạp ổn định
+def safe_change_select(page, selector, target_val):
     current = page.locator(selector).input_value()
     if current != target_val:
-        print(f"-> Đổi {selector} sang '{target_val}'...")
-        try:
-            with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
-                page.select_option(selector, value=target_val)
-            time.sleep(3)
-        except Exception:
-            page.select_option(selector, value=target_val)
-            time.sleep(4)
+        print(f"-> Chuyển {selector} sang '{target_val}'...")
+        page.select_option(selector, value=target_val)
+        time.sleep(4) # Chờ 4 giây để máy chủ cập nhật xong bảng mới
 
 # 2. Quy trình cào dữ liệu SGN
 def scrape_viags():
@@ -63,8 +58,9 @@ def scrape_viags():
 
         # BƯỚC 1: Chọn sân bay Sài Gòn (SGN)
         print("2. Đang chọn Sân bay: Ho Chi Minh (SGN)...")
-        change_select(page, SEL_ORIGIN, "SGN")
+        safe_change_select(page, SEL_ORIGIN, "SGN")
 
+        # 4 Mục cần lấy dữ liệu đầy đủ
         tasks = [
             {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
             {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
@@ -79,43 +75,30 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Đổi loại chuyến và chiều bay
-            change_select(page, SEL_STATION, task["station"])
-            change_select(page, SEL_TRIP, task["trip"])
-            time.sleep(3) # Chờ bảng mới ổn định
+            # Đổi loại chuyến và chiều bay (đợi ổn định từng bước)
+            safe_change_select(page, SEL_STATION, task["station"])
+            safe_change_select(page, SEL_TRIP, task["trip"])
 
-            # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
+            # BƯỚC ĐỘT PHÁ: BẤM NÚT 'LOAD MORE' TRỰC TIẾP QUA JAVASCRIPT ĐẾN HẾT SẠCH
             load_count = 0
-            empty_retry = 0
-            while True:
-                # Cuộn chuột xuống đáy trang để ép hiển thị nút Load more
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(1)
-
-                load_more = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
-                
-                if load_more.count() > 0 and load_more.first.is_visible():
-                    empty_retry = 0
+            for i in range(25): # Bấm tối đa 25 lần để vét sạch 100% chuyến bay
+                clicked = page.evaluate("""() => {
+                    const btn = document.querySelector('.c-btn1');
+                    if (btn && !btn.classList.contains('hidden') && btn.offsetParent !== null) {
+                        btn.click();
+                        return true;
+                    }
+                    return false;
+                }""")
+                if clicked:
                     load_count += 1
-                    print(f"-> Bấm 'Load more' lần {load_count}...")
-                    try:
-                        load_more.first.scroll_into_view_if_needed()
-                        load_more.first.click(timeout=3000)
-                        time.sleep(2.5) # Đợi nạp thêm chuyến bay
-                    except Exception as e:
-                        time.sleep(2)
-                    
-                    if load_count >= 25:
-                        break
+                    print(f"   -> Bấm 'Load more' lần {load_count}...")
+                    time.sleep(1.2)
                 else:
-                    # Kiểm tra lại lần 2 để chắc chắn rằng đã tải hết sạch thật sự
-                    empty_retry += 1
-                    if empty_retry >= 2:
-                        print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
-                        break
-                    time.sleep(2)
+                    print(f"   -> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
+                    break
 
-            # Đọc tiêu đề các cột
+            # Đọc tiêu đề các cột của bảng
             headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
             rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
             print(f"Tiêu đề bảng: {headers}")
@@ -136,7 +119,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Lọc chuyến bay của Vietnam Airlines
+                # Nhận diện chuyến bay của Vietnam Airlines
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -211,7 +194,7 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG DỮ LIỆU THẬT SGN VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY VÀO FIREBASE! ===")
     else:
         print("Cảnh báo: Không có dữ liệu để lưu.")
 
