@@ -97,7 +97,7 @@
     <!-- Thống kê nhanh -->
     <div class="flex items-center justify-between mb-4 px-1">
       <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay
+        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Đã sắp xếp theo giờ khởi hành / hạ cánh)
       </div>
       <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
@@ -110,11 +110,11 @@
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
+              <th class="py-3.5 px-4 font-bold text-center">Kế hoạch (Scheduled)</th>
+              <th class="py-3.5 px-4 font-bold text-center">Ước tính (Estimated)</th>
               <th class="py-3.5 px-4 font-bold">Chuyến bay</th>
               <th class="py-3.5 px-4 font-bold">Chiều bay</th>
               <th class="py-3.5 px-4 font-bold">Tuyến bay (Đến/Đi)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Kế hoạch</th>
-              <th class="py-3.5 px-4 font-bold text-center">Ước tính</th>
               <th class="py-3.5 px-4 font-bold text-center">Cửa (Gate)</th>
               <th class="py-3.5 px-4 font-bold text-center">Băng chuyền</th>
               <th class="py-3.5 px-4 font-bold text-center">Trạng thái</th>
@@ -122,13 +122,13 @@
             </tr>
           </thead>
           <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
-            <!-- Dữ liệu chuyến bay sẽ tự động render ở đây -->
+            <!-- Dữ liệu render tự động -->
           </tbody>
         </table>
       </div>
       <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
         <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay nào khớp với bộ lọc.</p>
+        <p class="font-medium">Không tìm thấy chuyến bay nào khớp với bộ lọc đã chọn.</p>
       </div>
     </div>
 
@@ -139,7 +139,6 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // Cấu hình Firebase của bạn
     const firebaseConfig = {
       apiKey: "AIzaSyCg4sWBwEwhgaIrNMKVPfCNN7mastS_Kko",
       authDomain: "sgn-flight-status.firebaseapp.com",
@@ -152,17 +151,16 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // Trạng thái bộ lọc
     let currentDirection = 'ALL';
     let currentType = 'ALL';
     let rawFlights = [];
 
-    // Khởi tạo ngày hôm nay
     const datePicker = document.getElementById('datePicker');
-    const today = new Date().toISOString().split('T')[0];
-    datePicker.value = today;
+    // Mặc định lấy ngày hôm nay theo giờ địa phương
+    const now = new Date();
+    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    datePicker.value = todayStr;
 
-    // Nghe dữ liệu thay đổi từ Firestore theo thời gian thực
     function listenToFlights(selectedDate) {
       document.getElementById('loadingStatus').classList.remove('hidden');
       const q = query(collection(db, "flights"), where("date", "==", selectedDate));
@@ -180,18 +178,31 @@
       });
     }
 
-    // Lọc và hiển thị
     function renderFlights() {
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
-      const filtered = rawFlights.filter(f => {
-        const matchDir = currentDirection === 'ALL' || f.direction === currentDirection;
-        const matchType = currentType === 'ALL' || f.flight_type === currentType;
+
+      // 1. Lọc theo Chiều bay, Loại chuyến và Từ khóa tìm kiếm
+      let filtered = rawFlights.filter(f => {
+        const fDir = (f.direction || '').toUpperCase();
+        const fType = (f.flight_type || '').toUpperCase();
+
+        const matchDir = (currentDirection === 'ALL') || (fDir === currentDirection.toUpperCase());
+        const matchType = (currentType === 'ALL') || (fType === currentType.toUpperCase());
+
         const matchSearch = !searchKey || 
           (f.flight_no && f.flight_no.toUpperCase().includes(searchKey)) ||
           (f.route && f.route.toUpperCase().includes(searchKey)) ||
           (f.from_city && f.from_city.toUpperCase().includes(searchKey)) ||
           (f.to_city && f.to_city.toUpperCase().includes(searchKey));
+
         return matchDir && matchType && matchSearch;
+      });
+
+      // 2. YÊU CẦU: TỰ ĐỘNG SẮP XẾP THEO THỜI GIAN SCHEDULED (TỪ SÁNG ĐẾN ĐÊM)
+      filtered.sort((a, b) => {
+        const timeA = a.scheduled || '99:99';
+        const timeB = b.scheduled || '99:99';
+        return timeA.localeCompare(timeB);
       });
 
       document.getElementById('flightCount').innerText = filtered.length;
@@ -205,45 +216,45 @@
       document.getElementById('emptyMessage').classList.add('hidden');
 
       filtered.forEach(f => {
-        const isDep = f.direction === 'Departure';
-        const isInt = f.flight_type === 'International';
+        const isDep = (f.direction || '').toUpperCase() === 'DEPARTURE';
+        const isInt = (f.flight_type || '').toUpperCase() === 'INTERNATIONAL';
 
-        // Huy hiệu trạng thái
         let badgeColor = "bg-slate-100 text-slate-700";
         const rem = (f.remarks || '').toUpperCase();
         if (rem.includes('DEPARTED') || rem.includes('ARRIVED') || rem.includes('LANDED')) {
           badgeColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-        } else if (rem.includes('DELAY')) {
+        } else if (rem.includes('DELAY') || rem.includes('WAITING')) {
           badgeColor = "bg-amber-50 text-amber-700 border border-amber-200";
         } else if (rem.includes('CANCEL')) {
-          badgeColor = "bg-rose-50 text-rose-700 border border-rose-200";
-        } else if (rem.includes('BOARDING') || rem.includes('GATE OPEN')) {
+          badgeColor = "bg-rose-50 text-rose-700 border border-rose-200 font-bold";
+        } else if (rem.includes('BOARDING') || rem.includes('OPEN') || rem.includes('CHECK-IN')) {
           badgeColor = "bg-sky-50 text-sky-700 border border-sky-200 font-bold";
         }
 
-        const fr24Url = f.fr24_url || `https://www.flightradar24.com/data/flights/${f.flight_no.replace(/\s+/g, '')}`;
+        const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
+        const fr24Url = `https://www.flightradar24.com/data/flights/${flightNoClean}`;
 
         const tr = document.createElement('tr');
         tr.className = "hover:bg-slate-50/80 transition duration-150";
         tr.innerHTML = `
+          <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}</td>
+          <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">
+            ${f.estimated || '--:--'}
+          </td>
           <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">
             <i class="fa-solid fa-plane text-vna-gold mr-1.5"></i> ${f.flight_no}
           </td>
           <td class="py-3 px-4 whitespace-nowrap">
             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${isDep ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
-              <i class="fa-solid ${isDep ? 'fa-arrow-up-right-from-square' : 'fa-arrow-down-left-and-up-right-to-loop'} mr-1"></i>
+              <i class="fa-solid ${isDep ? 'fa-plane-departure' : 'fa-plane-arrival'} mr-1"></i>
               ${isDep ? 'Bay Đi' : 'Bay Đến'}
             </span>
           </td>
           <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">
-            ${f.route || f.to_city || f.from_city || '--'}
+            ${f.route || f.destination_or_from || '--'}
             <span class="ml-1 text-[11px] font-normal px-1.5 py-0.5 rounded ${isInt ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}">
               ${isInt ? 'Quốc tế' : 'Quốc nội'}
             </span>
-          </td>
-          <td class="py-3 px-4 text-center font-mono font-medium whitespace-nowrap">${f.scheduled || '--:--'}</td>
-          <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-700'} whitespace-nowrap">
-            ${f.estimated || '--:--'}
           </td>
           <td class="py-3 px-4 text-center whitespace-nowrap">
             <span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.gate || '--'}</span>
@@ -259,7 +270,7 @@
           <td class="py-3 px-4 text-center whitespace-nowrap">
             <a href="${fr24Url}" target="_blank" rel="noopener noreferrer" 
                class="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
-              <i class="fa-solid fa-radar mr-1.5 text-xs animate-spin-slow"></i> Radar Live
+              <i class="fa-solid fa-radar mr-1.5 text-xs"></i> Radar Live
             </a>
           </td>
         `;
@@ -267,15 +278,12 @@
       });
     }
 
-    // Sự kiện đổi ngày
     datePicker.addEventListener('change', (e) => {
       listenToFlights(e.target.value);
     });
 
-    // Sự kiện tìm kiếm
     document.getElementById('searchInput').addEventListener('input', renderFlights);
 
-    // Đổi bộ lọc chiều bay
     window.setDirection = (dir) => {
       currentDirection = dir;
       document.querySelectorAll('.dir-btn').forEach(b => {
@@ -285,7 +293,6 @@
       renderFlights();
     };
 
-    // Đổi bộ lọc loại chuyến bay
     window.setType = (type) => {
       currentType = type;
       document.querySelectorAll('.type-btn').forEach(b => {
@@ -295,309 +302,7 @@
       renderFlights();
     };
 
-    // Khởi chạy ban đầu
-    listenToFlights(today);
-  </script>
-</body>
-</html><!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lịch Bay Vietnam Airlines - Sân Bay Tân Sơn Nhất (SGN)</title>
-  <!-- Tailwind CSS & FontAwesome Icons -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            vna: {
-              blue: '#005574',
-              dark: '#002d42',
-              gold: '#e2b343',
-              light: '#f0f7fa'
-            }
-          }
-        }
-      }
-    }
-  </script>
-</head>
-<body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
-
-  <!-- Header -->
-  <header class="bg-vna-dark text-white border-b-4 border-vna-gold shadow-lg sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-4 sm:flex sm:items-center sm:justify-between">
-      <div class="flex items-center space-x-3">
-        <i class="fa-solid fa-plane-departure text-vna-gold text-2xl sm:text-3xl"></i>
-        <div>
-          <h1 class="text-xl sm:text-2xl font-bold tracking-tight">SGN FLIGHT MONITOR</h1>
-          <p class="text-xs sm:text-sm text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS</p>
-        </div>
-      </div>
-      <div class="mt-3 sm:mt-0 flex items-center space-x-2">
-        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-          <span class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span> Tự động cập nhật
-        </span>
-      </div>
-    </div>
-  </header>
-
-  <!-- Main Container -->
-  <main class="max-w-7xl mx-auto px-4 py-6">
-
-    <!-- Bộ lọc & Lịch chọn ngày -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-        
-        <!-- Chọn ngày -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-regular fa-calendar-days text-vna-blue mr-1"></i> Chọn ngày bay:
-          </label>
-          <input type="date" id="datePicker" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
-        </div>
-
-        <!-- Chiều bay (Đi / Đến) -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Chiều bay:
-          </label>
-          <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-            <button onclick="setDirection('ALL')" id="btn-dir-ALL" class="dir-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm">Tất cả</button>
-            <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Bay Đi</button>
-            <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Bay Đến</button>
-          </div>
-        </div>
-
-        <!-- Loại chuyến (Quốc nội / Quốc tế) -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Loại chuyến:
-          </label>
-          <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-            <button onclick="setType('ALL')" id="btn-type-ALL" class="type-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm">Tất cả</button>
-            <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Quốc nội</button>
-            <button onclick="setType('International')" id="btn-type-International" class="type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Quốc tế</button>
-          </div>
-        </div>
-
-        <!-- Tìm kiếm -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-magnifying-glass text-vna-blue mr-1"></i> Tìm số hiệu / nơi đến:
-          </label>
-          <input type="text" id="searchInput" placeholder="VD: VN205, HAN, HUE..." class="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
-        </div>
-
-      </div>
-    </div>
-
-    <!-- Thống kê nhanh -->
-    <div class="flex items-center justify-between mb-4 px-1">
-      <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay
-      </div>
-      <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
-        <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
-      </div>
-    </div>
-
-    <!-- Bảng danh sách chuyến bay -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
-              <th class="py-3.5 px-4 font-bold">Chuyến bay</th>
-              <th class="py-3.5 px-4 font-bold">Chiều bay</th>
-              <th class="py-3.5 px-4 font-bold">Tuyến bay (Đến/Đi)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Kế hoạch</th>
-              <th class="py-3.5 px-4 font-bold text-center">Ước tính</th>
-              <th class="py-3.5 px-4 font-bold text-center">Cửa (Gate)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Băng chuyền</th>
-              <th class="py-3.5 px-4 font-bold text-center">Trạng thái</th>
-              <th class="py-3.5 px-4 font-bold text-center">Flightradar24</th>
-            </tr>
-          </thead>
-          <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
-            <!-- Dữ liệu chuyến bay sẽ tự động render ở đây -->
-          </tbody>
-        </table>
-      </div>
-      <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
-        <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay nào khớp với bộ lọc.</p>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- Firebase Web SDK -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-    // Cấu hình Firebase của bạn
-    const firebaseConfig = {
-      apiKey: "AIzaSyCg4sWBwEwhgaIrNMKVPfCNN7mastS_Kko",
-      authDomain: "sgn-flight-status.firebaseapp.com",
-      projectId: "sgn-flight-status",
-      storageBucket: "sgn-flight-status.firebasestorage.app",
-      messagingSenderId: "141073829827",
-      appId: "1:141073829827:web:6c61bce7519e300b727776"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-
-    // Trạng thái bộ lọc
-    let currentDirection = 'ALL';
-    let currentType = 'ALL';
-    let rawFlights = [];
-
-    // Khởi tạo ngày hôm nay
-    const datePicker = document.getElementById('datePicker');
-    const today = new Date().toISOString().split('T')[0];
-    datePicker.value = today;
-
-    // Nghe dữ liệu thay đổi từ Firestore theo thời gian thực
-    function listenToFlights(selectedDate) {
-      document.getElementById('loadingStatus').classList.remove('hidden');
-      const q = query(collection(db, "flights"), where("date", "==", selectedDate));
-
-      onSnapshot(q, (snapshot) => {
-        rawFlights = [];
-        snapshot.forEach((doc) => {
-          rawFlights.push(doc.data());
-        });
-        document.getElementById('loadingStatus').classList.add('hidden');
-        renderFlights();
-      }, (err) => {
-        console.error("Lỗi đọc Firebase:", err);
-        document.getElementById('loadingStatus').innerText = "Lỗi kết nối dữ liệu!";
-      });
-    }
-
-    // Lọc và hiển thị
-    function renderFlights() {
-      const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
-      const filtered = rawFlights.filter(f => {
-        const matchDir = currentDirection === 'ALL' || f.direction === currentDirection;
-        const matchType = currentType === 'ALL' || f.flight_type === currentType;
-        const matchSearch = !searchKey || 
-          (f.flight_no && f.flight_no.toUpperCase().includes(searchKey)) ||
-          (f.route && f.route.toUpperCase().includes(searchKey)) ||
-          (f.from_city && f.from_city.toUpperCase().includes(searchKey)) ||
-          (f.to_city && f.to_city.toUpperCase().includes(searchKey));
-        return matchDir && matchType && matchSearch;
-      });
-
-      document.getElementById('flightCount').innerText = filtered.length;
-      const tbody = document.getElementById('flightsTableBody');
-      tbody.innerHTML = '';
-
-      if (filtered.length === 0) {
-        document.getElementById('emptyMessage').classList.remove('hidden');
-        return;
-      }
-      document.getElementById('emptyMessage').classList.add('hidden');
-
-      filtered.forEach(f => {
-        const isDep = f.direction === 'Departure';
-        const isInt = f.flight_type === 'International';
-
-        // Huy hiệu trạng thái
-        let badgeColor = "bg-slate-100 text-slate-700";
-        const rem = (f.remarks || '').toUpperCase();
-        if (rem.includes('DEPARTED') || rem.includes('ARRIVED') || rem.includes('LANDED')) {
-          badgeColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-        } else if (rem.includes('DELAY')) {
-          badgeColor = "bg-amber-50 text-amber-700 border border-amber-200";
-        } else if (rem.includes('CANCEL')) {
-          badgeColor = "bg-rose-50 text-rose-700 border border-rose-200";
-        } else if (rem.includes('BOARDING') || rem.includes('GATE OPEN')) {
-          badgeColor = "bg-sky-50 text-sky-700 border border-sky-200 font-bold";
-        }
-
-        const fr24Url = f.fr24_url || `https://www.flightradar24.com/data/flights/${f.flight_no.replace(/\s+/g, '')}`;
-
-        const tr = document.createElement('tr');
-        tr.className = "hover:bg-slate-50/80 transition duration-150";
-        tr.innerHTML = `
-          <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">
-            <i class="fa-solid fa-plane text-vna-gold mr-1.5"></i> ${f.flight_no}
-          </td>
-          <td class="py-3 px-4 whitespace-nowrap">
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${isDep ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
-              <i class="fa-solid ${isDep ? 'fa-arrow-up-right-from-square' : 'fa-arrow-down-left-and-up-right-to-loop'} mr-1"></i>
-              ${isDep ? 'Bay Đi' : 'Bay Đến'}
-            </span>
-          </td>
-          <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">
-            ${f.route || f.to_city || f.from_city || '--'}
-            <span class="ml-1 text-[11px] font-normal px-1.5 py-0.5 rounded ${isInt ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}">
-              ${isInt ? 'Quốc tế' : 'Quốc nội'}
-            </span>
-          </td>
-          <td class="py-3 px-4 text-center font-mono font-medium whitespace-nowrap">${f.scheduled || '--:--'}</td>
-          <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-700'} whitespace-nowrap">
-            ${f.estimated || '--:--'}
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.gate || '--'}</span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2.5 py-1 rounded-full text-xs font-medium ${badgeColor}">
-              ${f.remarks || 'Bình thường'}
-            </span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <a href="${fr24Url}" target="_blank" rel="noopener noreferrer" 
-               class="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
-              <i class="fa-solid fa-radar mr-1.5 text-xs animate-spin-slow"></i> Radar Live
-            </a>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    // Sự kiện đổi ngày
-    datePicker.addEventListener('change', (e) => {
-      listenToFlights(e.target.value);
-    });
-
-    // Sự kiện tìm kiếm
-    document.getElementById('searchInput').addEventListener('input', renderFlights);
-
-    // Đổi bộ lọc chiều bay
-    window.setDirection = (dir) => {
-      currentDirection = dir;
-      document.querySelectorAll('.dir-btn').forEach(b => {
-        b.className = 'dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white';
-      });
-      document.getElementById(`btn-dir-${dir}`).className = 'dir-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm';
-      renderFlights();
-    };
-
-    // Đổi bộ lọc loại chuyến bay
-    window.setType = (type) => {
-      currentType = type;
-      document.querySelectorAll('.type-btn').forEach(b => {
-        b.className = 'type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white';
-      });
-      document.getElementById(`btn-type-${type}`).className = 'type-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm';
-      renderFlights();
-    };
-
-    // Khởi chạy ban đầu
-    listenToFlights(today);
+    listenToFlights(todayStr);
   </script>
 </body>
 </html>
