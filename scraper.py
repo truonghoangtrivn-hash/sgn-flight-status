@@ -19,7 +19,7 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm đổi select và chờ máy chủ VIAGS phản hồi
+# Đổi select và chờ phản hồi
 def change_select(page, selector, target_val):
     current = page.locator(selector).input_value()
     if current != target_val:
@@ -57,7 +57,6 @@ def scrape_viags():
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(3)
 
-        # ID các ô chọn chuẩn xác theo F12
         SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
         SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
         SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
@@ -66,7 +65,6 @@ def scrape_viags():
         print("2. Đang chọn Sân bay: Ho Chi Minh (SGN)...")
         change_select(page, SEL_ORIGIN, "SGN")
 
-        # 4 Tổ hợp cần lấy dữ liệu
         tasks = [
             {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
             {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
@@ -81,30 +79,30 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Chọn Loại chuyến (DOM / INT)
+            # Chọn Loại chuyến và Chiều bay
             change_select(page, SEL_STATION, task["station"])
-            # Chọn Chiều bay (D: Đi / A: Đến)
             change_select(page, SEL_TRIP, task["trip"])
 
-            # BƯỚC QUAN TRỌNG: BẤM NÚT VÀNG 'LOAD MORE' QUA CLASS .c-btn1 ĐÃ SOI F12
+            # BẤM NÚT VÀNG 'LOAD MORE' - CÓ KIỂM TRA HIDDEN CHUẨN XÁC
             load_count = 0
             while True:
-                load_more = page.locator(".c-btn1:has-text('Load more'), span:has-text('Load more')")
+                # Chỉ tìm nút Load more đang hiển thị (KHÔNG có class hidden)
+                load_more = page.locator(".c-btn1:not(.hidden):visible, span:not(.hidden):has-text('Load more'):visible")
+                
                 if load_more.count() > 0 and load_more.first.is_visible():
                     load_count += 1
                     print(f"-> Bấm 'Load more' lần {load_count}...")
                     try:
-                        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=15000):
-                            load_more.first.click()
+                        load_more.first.click(timeout=3000)
                         time.sleep(2)
-                    except:
-                        load_more.first.click()
-                        time.sleep(3)
-
-                    if load_count >= 25: # Tải tối đa 25 trang liên tục
+                    except Exception:
+                        print("-> Nút Load more đã ẩn hoặc hết danh sách.")
+                        break
+                    
+                    if load_count >= 25:
                         break
                 else:
-                    print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
+                    print(f"-> Đã tải xong toàn bộ danh sách (Nút đã ẩn sau {load_count} lần bấm).")
                     break
 
             # Đọc tiêu đề các cột của bảng
@@ -128,7 +126,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Nhận diện chuyến bay của Vietnam Airlines
+                # Nhận diện chuyến bay của Vietnam Airlines (VN hoặc Vietnam Airlines)
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -192,7 +190,6 @@ def scrape_viags():
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
