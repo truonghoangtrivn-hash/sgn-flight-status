@@ -1,0 +1,30 @@
+name: Auto Scrape VIAGS Flights
+
+on:
+  schedule:
+    # Chạy tự động mỗi giờ 1 lần
+    - cron: '0 * * * *'
+  workflow_dispatch: # Cho phép bấm chạy thử nghiệm thủ công bất kỳ lúc nào
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright firebase-admin pytz
+          playwright install chromium
+
+      - name: Run Scraper
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          python scraper.py
