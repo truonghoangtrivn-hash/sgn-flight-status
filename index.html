@@ -67,7 +67,7 @@
       </div>
     </header>
 
-    <!-- 2. Thanh điều khiển Bộ lọc (TYPE ĐẶT TRƯỚC BOUND) -->
+    <!-- 2. Thanh điều khiển Bộ lọc (ĐÃ BỎ NÚT ALL - CHỈ CÒN DOM/INTL VÀ DEP/ARR) -->
     <div class="bg-white/95 backdrop-blur border-b border-slate-200">
       <div class="max-w-7xl mx-auto px-4 py-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -80,26 +80,24 @@
             <input type="date" id="datePicker" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
           </div>
 
-          <!-- TYPE: ALL | DOM | INTL -->
+          <!-- TYPE: DOM | INTL (BỎ ALL) -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Type:
             </label>
-            <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-lg">
-              <button onclick="setType('ALL')" id="btn-type-ALL" class="type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">ALL</button>
-              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">DOM</button>
+            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg">
+              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">DOM</button>
               <button onclick="setType('International')" id="btn-type-International" class="type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">INTL</button>
             </div>
           </div>
 
-          <!-- BOUND: ALL | DEP | ARR -->
+          <!-- BOUND: DEP | ARR (BỎ ALL) -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Bound:
             </label>
-            <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-lg">
-              <button onclick="setDirection('ALL')" id="btn-dir-ALL" class="dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">ALL</button>
-              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">DEP</button>
+            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg">
+              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">DEP</button>
               <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">ARR</button>
             </div>
           </div>
@@ -124,7 +122,7 @@
     <!-- Thống kê nhanh & Trạng thái tải -->
     <div class="flex items-center justify-between mb-3 px-1">
       <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Chu kỳ khai thác: 03:00 D &rarr; 02:59 D+1)
+        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Chu kỳ: 03:00 D &rarr; 02:59 D+1)
       </div>
       <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
@@ -151,7 +149,7 @@
 
   </main>
 
-  <!-- Firebase Web SDK & Logic Chu Kỳ Khai Thác -->
+  <!-- Firebase Web SDK & Logic Ghi Nhớ Lựa Chọn (LocalStorage) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -168,8 +166,10 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    let currentDirection = 'ALL';
-    let currentType = 'ALL';
+    // ĐỌC BỘ NHỚ LOCALSTORAGE ĐỂ KHÔI PHỤC LỰA CHỌN CŨ (Mặc định nếu chưa có: DOM và DEP)
+    let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
+    let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
+    
     let rawFlights = [];
     let isInitialLoad = true;
     let selectedDate = '';
@@ -180,7 +180,28 @@
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     datePicker.value = todayStr;
 
-    // Tính ngày tiếp theo (D+1)
+    // Cập nhật giao diện các nút bấm theo đúng bộ nhớ
+    function updateButtonUI() {
+      // Cập nhật Type (DOM / INTL)
+      document.querySelectorAll('.type-btn').forEach(b => {
+        b.className = 'type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
+      });
+      const activeTypeBtn = document.getElementById(`btn-type-${currentType}`);
+      if (activeTypeBtn) {
+        activeTypeBtn.className = 'type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+      }
+
+      // Cập nhật Bound (DEP / ARR)
+      document.querySelectorAll('.dir-btn').forEach(b => {
+        b.className = 'dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
+      });
+      const activeDirBtn = document.getElementById(`btn-dir-${currentDirection}`);
+      if (activeDirBtn) {
+        activeDirBtn.className = 'dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+      }
+    }
+
+    // Tính ngày D+1
     function calculateNextDate(dateStr) {
       const parts = dateStr.split('-');
       const d = new Date(parts[0], parts[1] - 1, parts[2]);
@@ -188,14 +209,12 @@
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    // Lắng nghe dữ liệu cả 2 ngày (D và D+1) từ Firebase
     function listenToFlights(chosenDate) {
       selectedDate = chosenDate;
       nextDateStr = calculateNextDate(chosenDate);
 
       document.getElementById('loadingStatus').classList.remove('hidden');
       
-      // Truy vấn cả ngày D và ngày D+1
       const q = query(collection(db, "flights"), where("date", "in", [selectedDate, nextDateStr]));
 
       onSnapshot(q, (snapshot) => {
@@ -219,30 +238,28 @@
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
       const filtered = rawFlights.filter(f => {
-        // 1. Tự động bỏ các chuyến bay bị Cancel
+        // Bỏ các chuyến Cancel
         const rem = (f.remarks || '').toUpperCase();
         if (rem.includes('CANCEL')) {
           return false;
         }
 
-        // 2. LOGIC CA KHAI THÁC HÀNG KHÔNG (03:00 D -> 02:59 D+1):
+        // Ca khai thác: 03:00 D -> 02:59 D+1
         const sched = f.scheduled || '';
         if (f.date === selectedDate) {
-          // Ngày D: Chỉ lấy từ 03:00 trở đi (bỏ các chuyến trước 03:00)
           if (sched < '03:00') return false;
         } else if (f.date === nextDateStr) {
-          // Ngày D+1: Chỉ lấy từ 00:00 đến trước 03:00
           if (sched >= '03:00') return false;
         } else {
           return false;
         }
 
-        // 3. Lọc theo Bound & Type & Tìm kiếm
+        // Lọc chuẩn xác theo bộ nhớ Type & Bound
         const fDir = (f.direction || '').toUpperCase();
         const fType = (f.flight_type || '').toUpperCase();
 
-        const matchDir = (currentDirection === 'ALL') || (fDir === currentDirection.toUpperCase());
-        const matchType = (currentType === 'ALL') || (fType === currentType.toUpperCase());
+        const matchDir = (fDir === currentDirection.toUpperCase());
+        const matchType = (fType === currentType.toUpperCase());
 
         const matchSearch = !searchKey || 
           (f.flight_no && f.flight_no.toUpperCase().includes(searchKey)) ||
@@ -252,19 +269,17 @@
         return matchDir && matchType && matchSearch;
       });
 
-      // 4. SẮP XẾP: 03:00 -> 23:59 (ngày D) rồi mới tới 00:00 -> 02:59 (ngày D+1)
+      // Sắp xếp: Ngày D (03:00 -> 23:59) rồi đến Ngày D+1 (00:00 -> 02:59)
       filtered.sort((a, b) => {
         const prioA = (a.date === selectedDate) ? 0 : 1;
         const prioB = (b.date === selectedDate) ? 0 : 1;
-        if (prioA !== prioB) {
-          return prioA - prioB;
-        }
+        if (prioA !== prioB) return prioA - prioB;
         return (a.scheduled || '99:99').localeCompare(b.scheduled || '99:99');
       });
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // 5. CẬP NHẬT HEADER CHUẨN TIẾNG ANH & THỨ TỰ THEO BOUND
+      // CẬP NHẬT HEADER (Chỉ có 2 trường hợp: DEP hoặc ARR)
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
@@ -280,7 +295,7 @@
             <th class="py-3.5 px-4 font-bold text-center">STATUS</th>
           </tr>
         `;
-      } else if (currentDirection === 'Arrival') {
+      } else {
         // FLT NO. - FROM - STA - ETA - Flightradar24 - BELT - STATUS
         headerHtml = `
           <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
@@ -293,27 +308,13 @@
             <th class="py-3.5 px-4 font-bold text-center">STATUS</th>
           </tr>
         `;
-      } else {
-        // TẤT CẢ (ALL)
-        headerHtml = `
-          <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
-            <th class="py-3.5 px-4 font-bold">FLT NO.</th>
-            <th class="py-3.5 px-4 font-bold">ROUTE</th>
-            <th class="py-3.5 px-4 font-bold text-center">STD / STA</th>
-            <th class="py-3.5 px-4 font-bold text-center">ETD / ETA</th>
-            <th class="py-3.5 px-4 font-bold text-center">GATE</th>
-            <th class="py-3.5 px-4 font-bold text-center">BELT</th>
-            <th class="py-3.5 px-4 font-bold text-center">STATUS</th>
-            <th class="py-3.5 px-4 font-bold text-center">Flightradar24</th>
-          </tr>
-        `;
       }
       thead.innerHTML = headerHtml;
 
-      // 6. TÌM CHUYẾN BAY TRÙNG GIỜ HIỆN TẠI ĐỂ CANH GIỮA MÀN HÌNH
+      // Tìm chuyến bay trùng giờ hiện tại
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
-      const isLateNight = currentHHMM < '03:00'; // Đang là rạng sáng sau nửa đêm
+      const isLateNight = currentHHMM < '03:00';
       
       let targetRowIndex = -1;
       if (selectedDate === todayStr) {
@@ -332,7 +333,7 @@
         }
       }
 
-      // 7. RENDER DỮ LIỆU
+      // RENDER DỮ LIỆU
       const tbody = document.getElementById('flightsTableBody');
 
       if (filtered.length === 0) {
@@ -344,7 +345,6 @@
 
       let rowsHtml = '';
       filtered.forEach((f, idx) => {
-        const isDep = (f.direction || '').toUpperCase() === 'DEPARTURE';
         const isNextDayFlight = (f.date === nextDateStr);
         const isCurrentFocus = (idx === targetRowIndex && selectedDate === todayStr);
 
@@ -363,7 +363,6 @@
         const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
         const cityName = f.route || f.destination_or_from || '--';
 
-        // Nhấp nháy nếu là chuyến Boarding
         let trClass = "hover:bg-slate-50/80 transition duration-150";
         if (isBoarding) {
           trClass = "boarding-row-blink border-l-4 border-l-amber-500 font-medium";
@@ -372,14 +371,11 @@
         }
 
         const trId = isCurrentFocus ? 'id="currentFocusFlight"' : '';
-
-        // Hiển thị giờ kèm dấu (+1) nếu là chuyến rạng sáng ngày hôm sau
         const timeBadge = isNextDayFlight 
           ? `<span class="text-[11px] text-sky-600 font-semibold ml-1">(+1)</span>` 
           : '';
 
         if (currentDirection === 'Departure') {
-          // DEP: FLT NO. - DEST - STD - ETD - GATE - STATUS
           rowsHtml += `
             <tr ${trId} class="${trClass}">
               <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
@@ -390,8 +386,7 @@
               <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${badgeColor}">${f.remarks || 'Normal'}</span></td>
             </tr>
           `;
-        } else if (currentDirection === 'Arrival') {
-          // ARR: FLT NO. - FROM - STA - ETA - Flightradar24 - BELT - STATUS
+        } else {
           rowsHtml += `
             <tr ${trId} class="${trClass}">
               <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
@@ -405,26 +400,6 @@
               </td>
               <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span></td>
               <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${badgeColor}">${f.remarks || 'Normal'}</span></td>
-            </tr>
-          `;
-        } else {
-          // ALL
-          rowsHtml += `
-            <tr ${trId} class="${trClass}">
-              <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
-              <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${cityName}</td>
-              <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
-              <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap">${isDep ? `<span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.gate || '--'}</span>` : '--'}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap">${!isDep ? `<span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span>` : '--'}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${badgeColor}">${f.remarks || 'Normal'}</span></td>
-              <td class="py-3 px-4 text-center whitespace-nowrap">
-                ${!isDep ? `
-                  <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
-                    <i class="fa-solid fa-radar mr-1.5 text-xs"></i> Radar Live
-                  </a>
-                ` : '--'}
-              </td>
             </tr>
           `;
         }
@@ -444,7 +419,6 @@
       }
     }
 
-    // Sự kiện đổi ngày
     datePicker.addEventListener('change', (e) => {
       isInitialLoad = true;
       listenToFlights(e.target.value);
@@ -452,25 +426,21 @@
 
     document.getElementById('searchInput').addEventListener('input', () => renderFlights(false));
 
-    // Bound: ALL | DEP | ARR
+    // LƯU VÀ GHI NHỚ BOUND: DEP / ARR
     window.setDirection = (dir) => {
       if (currentDirection === dir) return;
       currentDirection = dir;
-      document.querySelectorAll('.dir-btn').forEach(b => {
-        b.className = 'dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
-      });
-      document.getElementById(`btn-dir-${dir}`).className = 'dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+      localStorage.setItem('vna_selected_bound', dir); // Lưu bộ nhớ
+      updateButtonUI();
       renderFlights(false);
     };
 
-    // Type: ALL | DOM | INTL
+    // LƯU VÀ GHI NHỚ TYPE: DOM / INTL
     window.setType = (type) => {
       if (currentType === type) return;
       currentType = type;
-      document.querySelectorAll('.type-btn').forEach(b => {
-        b.className = 'type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
-      });
-      document.getElementById(`btn-type-${type}`).className = 'type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+      localStorage.setItem('vna_selected_type', type); // Lưu bộ nhớ
+      updateButtonUI();
       renderFlights(false);
     };
 
@@ -527,6 +497,8 @@
       }
     };
 
+    // Khởi động giao diện ban đầu theo đúng bộ nhớ
+    updateButtonUI();
     listenToFlights(todayStr);
   </script>
 </body>
