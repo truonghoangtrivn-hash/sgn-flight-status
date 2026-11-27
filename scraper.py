@@ -19,115 +19,101 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm click chọn dropdown tùy biến trên VIAGS (Mô phỏng 100% thao tác chuột người dùng)
-def select_viags_dropdown(page, dropdown_index, option_text):
-    print(f"Đang chọn ô {dropdown_index + 1} -> '{option_text}'...")
+# Hàm click chuột trực tiếp vào menu thả xuống theo giao diện thực tế
+def click_nice_select(page, current_or_label_text, target_option_text):
+    print(f"Đang đổi lựa chọn sang: '{target_option_text}'...")
     try:
-        # Tìm các hộp chọn tùy biến (.nice-select hoặc thẻ div tương đương)
-        boxes = page.locator(".nice-select, .select-styled, .custom-select, .dropdown")
-        if boxes.count() > dropdown_index:
-            target_box = boxes.nth(dropdown_index)
-            target_box.scroll_into_view_if_needed()
-            target_box.click(timeout=4000)
-            time.sleep(0.5)
+        # 1. Tìm và bấm vào hộp chọn hiển thị trên màn hình
+        dropdown = page.locator(f".nice-select:has-text('{current_or_label_text}')").first
+        if not dropdown.is_visible():
+            dropdown = page.locator(f"div.nice-select:has(span:has-text('{current_or_label_text}'))").first
+        
+        dropdown.scroll_into_view_if_needed()
+        dropdown.click(timeout=5000)
+        time.sleep(0.8)
 
-            # Click vào lựa chọn xuất hiện trong danh sách thả xuống
-            opt = target_box.locator(f"li:has-text('{option_text}')")
-            if opt.count() > 0:
-                opt.first.click(timeout=4000)
-            else:
-                page.locator(f"li.option:has-text('{option_text}'), li:has-text('{option_text}')").first.click(timeout=4000)
-            time.sleep(2.5)
-            print(f"-> Thành công chọn: {option_text}")
-            return True
-    except Exception as e:
-        print(f"Click menu không thành công ({e}), chuyển sang fallback JS...")
-
-    # Dự phòng: Ép bằng JavaScript nếu giao diện không phản hồi click
-    try:
-        page.evaluate(f"""() => {{
-            const selects = document.querySelectorAll('select');
-            if (selects.length > {dropdown_index}) {{
-                const sel = selects[{dropdown_index}];
-                for (let opt of sel.options) {{
-                    if (opt.text.toLowerCase().includes('{option_text.lower()}')) {{
-                        sel.value = opt.value;
-                        if (window.jQuery) {{
-                            window.jQuery(sel).val(opt.value).trigger('change');
-                        }}
-                        sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        break;
-                    }}
-                }}
-            }}
-        }}""")
-        time.sleep(2.5)
-        print(f"-> JS Fallback đã kích hoạt cho: {option_text}")
+        # 2. Bấm vào giá trị cần chọn trong danh sách thả xuống
+        option = page.locator(f"li.option:has-text('{target_option_text}'), li:has-text('{target_option_text}')").first
+        option.scroll_into_view_if_needed()
+        option.click(timeout=5000)
+        time.sleep(3.5) # Chờ bảng tải dữ liệu mới
+        print(f"-> Đã chọn thành công: {target_option_text}")
         return True
-    except Exception as ex:
-        print(f"Lỗi khi chọn {option_text}: {ex}")
-        return False
+    except Exception as e:
+        print(f"Click trực tiếp '{target_option_text}' gặp lỗi: {e}")
+        # Phương án dự phòng bằng JavaScript click
+        try:
+            page.evaluate(f"""() => {{
+                const opts = Array.from(document.querySelectorAll('.nice-select ul li'));
+                const target = opts.find(li => li.innerText.trim().toLowerCase() === '{target_option_text.lower()}');
+                if (target) {{
+                    target.closest('.nice-select').click();
+                    target.click();
+                }}
+            }}""")
+            time.sleep(3.5)
+            print(f"-> JS Click dự phòng thành công cho: {target_option_text}")
+            return True
+        except Exception as ex:
+            print(f"Không thể chọn {target_option_text}: {ex}")
+            return False
 
-# 2. Quá trình cào dữ liệu
+# 2. Cào dữ liệu toàn bộ chuyến bay SGN
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
     today_str = datetime.now(tz_vn).strftime('%Y-%m-%d')
-    print(f"=====================================================")
-    print(f" BẮT ĐẦU CÀO DỮ LIỆU VIAGS SGN CHO NGÀY: {today_str}")
-    print(f"=====================================================")
+    print(f"=======================================================")
+    print(f" BẮT ĐẦU CÀO DỮ LIỆU CHUẨN XÁC VIAGS SGN: {today_str}")
+    print(f"=======================================================")
 
     all_flights = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1400, "height": 900}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width": 1440, "height": 900}
         )
         page = context.new_page()
 
         url = "https://www.viags.vn/en-US/flight-schedules"
-        print(f"Mở liên kết: {url}")
+        print(f"Mở trang web: {url}")
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(3)
 
-        # Cấu hình chuẩn 5 ô chọn theo ảnh thực tế của bạn:
-        # Ô 1 (index 0): Flights (Domestic / International)
-        # Ô 2 (index 1): Departures / Arrivals
-        # Ô 3 (index 2): Location (Bắt buộc chọn Ho Chi Minh)
-        # Ô 4 (index 3): Date
-        # Ô 5 (index 4): Time (Bắt buộc chọn All day)
+        # BƯỚC 1: Chuyển Location sang 'Ho Chi Minh' (Mặc định trang ban đầu là Ha Noi)
+        click_nice_select(page, "Ha Noi", "Ho Chi Minh")
 
-        # 1. Chọn Location = Ho Chi Minh (Ô số 3, index 2)
-        select_viags_dropdown(page, 2, "Ho Chi Minh")
-        time.sleep(2)
-
-        # 2. Chọn Time = All day (Ô số 5, index 4)
-        select_viags_dropdown(page, 4, "All day")
-        time.sleep(1)
-
-        # 4 Tổ hợp cần lấy:
-        tasks = [
-            {"f_type": "Domestic", "f_label": "Domestic Flights", "d_type": "Departure", "d_label": "Departures"},
-            {"f_type": "Domestic", "f_label": "Domestic Flights", "d_type": "Arrival", "d_label": "Arrivals"},
-            {"f_type": "International", "f_label": "International Flights", "d_type": "Departure", "d_label": "Departures"},
-            {"f_type": "International", "f_label": "International Flights", "d_type": "Arrival", "d_label": "Arrivals"},
+        # 4 Tổ hợp cần cào
+        scenarios = [
+            # 1. Quốc nội - Bay Đi
+            {"f_curr": "Domestic Flights", "f_target": "Domestic Flights", "d_curr": "Departures", "d_target": "Departures", "f_type": "Domestic", "d_type": "Departure"},
+            # 2. Quốc nội - Bay Đến
+            {"f_curr": "Domestic Flights", "f_target": "Domestic Flights", "d_curr": "Departures", "d_target": "Arrivals", "f_type": "Domestic", "d_type": "Arrival"},
+            # 3. Quốc tế - Bay Đi
+            {"f_curr": "Domestic Flights", "f_target": "International Flights", "d_curr": "Arrivals", "d_target": "Departures", "f_type": "International", "d_type": "Departure"},
+            # 4. Quốc tế - Bay Đến
+            {"f_curr": "International Flights", "f_target": "International Flights", "d_curr": "Departures", "d_target": "Arrivals", "f_type": "International", "d_type": "Arrival"}
         ]
 
-        for task in tasks:
-            f_type = task["f_type"]
-            d_type = task["d_type"]
-            print(f"\n>>> ĐANG LẤY: [ {f_type.upper()} ] - [ {d_type.upper()} ] <<<")
+        for sc in scenarios:
+            f_type = sc["f_type"]
+            d_type = sc["d_type"]
+            print(f"\n=======================================================")
+            print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ]")
+            print(f"=======================================================")
 
-            # Chọn loại chuyến (Ô 1, index 0)
-            select_viags_dropdown(page, 0, task["f_label"])
-            # Chọn chiều bay (Ô 2, index 1)
-            select_viags_dropdown(page, 1, task["d_label"])
-            time.sleep(2)
+            # Chuyển đổi loại chuyến bay (Flights) nếu cần
+            if sc["f_curr"] != sc["f_target"]:
+                click_nice_select(page, sc["f_curr"], sc["f_target"])
 
-            # Bấm nút 'Load more' nhiều lần nếu có để lấy hết tất cả chuyến trong ngày
-            for _ in range(12):
+            # Chuyển đổi chiều bay (Departures / Arrivals) nếu cần
+            if sc["d_curr"] != sc["d_target"]:
+                click_nice_select(page, sc["d_curr"], sc["d_target"])
+
+            # Bấm 'Load more' nhiều lần để tải toàn bộ danh sách trong ngày
+            for _ in range(15):
                 try:
                     load_more = page.locator("a:has-text('Load more'), button:has-text('Load more')").first
                     if load_more.is_visible():
@@ -138,16 +124,16 @@ def scrape_viags():
                 except:
                     break
 
-            # Đọc tiêu đề cột (th) để tự động ánh xạ, không bao giờ lo lệch cột
+            # Đọc tiêu đề các cột của bảng hiện tại
             headers = [th.inner_text().strip().lower() for th in page.locator("table thead tr th").all()]
-            print(f"Tiêu đề bảng: {headers}")
-
             rows = page.locator("table tbody tr").all()
-            print(f"Số hàng tìm thấy: {len(rows)}")
+            print(f"Cột bảng thực tế: {headers}")
+            print(f"Tổng số dòng cào được: {len(rows)}")
 
+            section_count = 0
             for row in rows:
                 tds = row.locator("td").all()
-                if not tds or len(tds) < 4:
+                if not tds or len(tds) < 5:
                     continue
 
                 col_map = {}
@@ -155,62 +141,81 @@ def scrape_viags():
                     h_name = headers[idx] if idx < len(headers) else f"col_{idx}"
                     col_map[h_name] = td.inner_text().strip()
 
-                # Kiểm tra thông tin chuyến bay
-                flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 row_raw_text = " ".join(col_map.values()).upper()
+                flight_no = col_map.get("flights", "").replace(" ", "").upper()
+                airline = col_map.get("airlines", "")
 
-                # Kiểm tra có phải Vietnam Airlines hay không
-                # Bao gồm mã chuyến bắt đầu bằng VN, hoặc có chữ VIETNAM AIRLINES
-                is_vn = flight_no.startswith("VN") or "VIETNAM AIRLINES" in row_raw_text
+                # Nhận diện chính xác chuyến bay của Vietnam Airlines
+                is_vna = (
+                    flight_no.startswith("VN") or 
+                    "VIETNAM AIRLINES" in airline.upper() or 
+                    "VIETNAM AIRLINES" in row_raw_text
+                )
                 
-                # Bắt thêm trường hợp mã VN nằm ở cột khác
-                if not is_vn:
+                if not is_vna:
                     match_vn = re.search(r'\b(VN\s*\d{2,4})\b', row_raw_text)
                     if match_vn:
-                        is_vn = True
+                        is_vna = True
                         flight_no = match_vn.group(1).replace(" ", "")
 
-                if is_vn and flight_no:
-                    # Xác định tuyến bay (Nơi đến nếu Bay Đi, Nơi đi nếu Bay Đến)
-                    dest_or_from = col_map.get("destination", "") or col_map.get("from", "")
-                    
+                if is_vna and flight_no:
+                    # Lấy tuyến bay: Nếu Bay Đi lấy Destination, nếu Bay Đến lấy From
+                    route = col_map.get("destination", "") if d_type == "Departure" else col_map.get("from", "")
+
+                    # Cổng (Gate): Chiều đi mới có Cổng, chiều đến để '--'
+                    gate = col_map.get("gate", "--") if d_type == "Departure" else "--"
+                    if not gate or gate == "":
+                        gate = "--"
+
+                    # Băng chuyền (Belt): Chiều đến mới có Băng chuyền, chiều đi để '--'
+                    belt = col_map.get("baggage belts", col_map.get("belt", "--")) if d_type == "Arrival" else "--"
+                    if not belt or belt == "":
+                        belt = "--"
+
+                    remarks = col_map.get("remarks", "Normal")
+                    if not remarks:
+                        remarks = "Normal"
+
                     flight_item = {
                         "date": today_str,
                         "scheduled": col_map.get("scheduled", "--:--"),
                         "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
-                        "destination_or_from": dest_or_from,
-                        "route": dest_or_from,
+                        "destination_or_from": route,
+                        "route": route,
                         "airline": "Vietnam Airlines",
                         "flight_no": flight_no,
-                        "gate": col_map.get("gate", "--") if col_map.get("gate") else "--",
-                        "belt": col_map.get("baggage belts", col_map.get("belt", "--")) if col_map.get("baggage belts", col_map.get("belt")) else "--",
-                        "remarks": col_map.get("remarks", "Normal"),
-                        "flight_type": f_type,       # Domestic hoặc International chuẩn xác
-                        "direction": d_type,           # Departure hoặc Arrival chuẩn xác
+                        "gate": gate,
+                        "belt": belt,
+                        "remarks": remarks,
+                        "flight_type": f_type,       # Domestic / International
+                        "direction": d_type,           # Departure / Arrival
                         "airport": "SGN",
                         "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
                         "updated_at": firestore.SERVER_TIMESTAMP
                     }
                     all_flights.append(flight_item)
+                    section_count += 1
+
+            print(f"-> Thu thập được {section_count} chuyến bay Vietnam Airlines trong mục này.")
 
         browser.close()
 
     print(f"\n=======================================================")
-    print(f" TỔNG SỐ CHUYẾN BAY THU THẬP THẬT TẠI SGN: {len(all_flights)}")
+    print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY THẬT SGN")
     print(f"=======================================================")
 
     if len(all_flights) > 0:
-        # Xóa các chuyến bay cũ của ngày hôm nay để tránh dữ liệu rác trước đó
+        # Xóa sạch dữ liệu cũ của ngày hôm nay để nạp mới hoàn toàn
         print("Đang làm sạch dữ liệu cũ trong Firebase...")
         docs = db.collection("flights").where("date", "==", today_str).stream()
         for doc in docs:
             doc.reference.delete()
 
-        # Lưu dữ liệu mới hoàn toàn chính xác
+        # Lưu dữ liệu sạch vào Firestore
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Tạo mã định danh độc nhất: VD: 2026-11-27_Departure_Domestic_VN1366
+            # Mã định danh tài liệu độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
@@ -222,9 +227,9 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU DỮ LIỆU THẬT 100% TỪ VIAGS VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY THẬT VÀO FIREBASE! ===")
     else:
-        print("Cảnh báo: Không tìm thấy chuyến bay nào!")
+        print("Cảnh báo: Không có chuyến bay nào được lưu.")
 
 if __name__ == "__main__":
     scrape_viags()
