@@ -1,308 +1,246 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lịch Bay Vietnam Airlines - Sân Bay Tân Sơn Nhất (SGN)</title>
-  <!-- Tailwind CSS & FontAwesome Icons -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            vna: {
-              blue: '#005574',
-              dark: '#002d42',
-              gold: '#e2b343',
-              light: '#f0f7fa'
-            }
-          }
-        }
-      }
-    }
-  </script>
-</head>
-<body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
+import json
+import os
+import re
+import time
+from datetime import datetime
+import pytz
+from playwright.sync_api import sync_playwright
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-  <!-- Header -->
-  <header class="bg-vna-dark text-white border-b-4 border-vna-gold shadow-lg sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-4 sm:flex sm:items-center sm:justify-between">
-      <div class="flex items-center space-x-3">
-        <i class="fa-solid fa-plane-departure text-vna-gold text-2xl sm:text-3xl"></i>
-        <div>
-          <h1 class="text-xl sm:text-2xl font-bold tracking-tight">SGN FLIGHT MONITOR</h1>
-          <p class="text-xs sm:text-sm text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS</p>
-        </div>
-      </div>
-      <div class="mt-3 sm:mt-0 flex items-center space-x-2">
-        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-          <span class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span> Tự động cập nhật
-        </span>
-      </div>
-    </div>
-  </header>
+# 1. Khởi tạo kết nối Firebase
+def init_firebase():
+    sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+    if not sa_json:
+        raise ValueError("Thiếu biến môi trường FIREBASE_SERVICE_ACCOUNT!")
+    cred_dict = json.loads(sa_json)
+    cred = credentials.Certificate(cred_dict)
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
-  <!-- Main Container -->
-  <main class="max-w-7xl mx-auto px-4 py-6">
+# Hàm click chọn dropdown mô phỏng người dùng
+def select_dropdown_option(page, dropdown_index, option_name):
+    print(f"-> Đang chọn ô số {dropdown_index + 1} sang: '{option_name}'...")
+    try:
+        # Bấm mở hộp chọn .nice-select theo thứ tự trên giao diện
+        # 0: Flights | 1: Departures/Arrivals | 2: Location | 3: Time
+        dropdowns = page.locator(".nice-select")
+        if dropdowns.count() > dropdown_index:
+            box = dropdowns.nth(dropdown_index)
+            box.scroll_into_view_if_needed()
+            box.click(timeout=4000)
+            time.sleep(0.6)
 
-    <!-- Bộ lọc & Lịch chọn ngày -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-        
-        <!-- Chọn ngày -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-regular fa-calendar-days text-vna-blue mr-1"></i> Chọn ngày bay:
-          </label>
-          <input type="date" id="datePicker" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
-        </div>
+            # Bấm vào dòng lựa chọn xuất hiện
+            opt = page.locator(f"li.option:has-text('{option_name}'), li:has-text('{option_name}')").first
+            opt.scroll_into_view_if_needed()
+            opt.click(timeout=4000)
+            time.sleep(3)
+            print(f"   ✓ Đã chọn thành công: {option_name}")
+            return True
+    except Exception as e:
+        print(f"   Lỗi khi click: {e}")
 
-        <!-- Chiều bay (Đi / Đến) -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Chiều bay:
-          </label>
-          <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-            <button onclick="setDirection('ALL')" id="btn-dir-ALL" class="dir-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm">Tất cả</button>
-            <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Bay Đi</button>
-            <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Bay Đến</button>
-          </div>
-        </div>
+    # Dự phòng bằng lệnh JavaScript Click
+    try:
+        page.evaluate(f"""() => {{
+            const lis = Array.from(document.querySelectorAll('li'));
+            const target = lis.find(li => li.innerText.trim().toLowerCase() === '{option_name.lower()}');
+            if (target) {{
+                const p = target.closest('.nice-select');
+                if (p) p.click();
+                target.click();
+            }}
+        }}""")
+        time.sleep(3)
+        print(f"   ✓ JS Click dự phòng thành công cho: {option_name}")
+        return True
+    except Exception as ex:
+        print(f"   Thất bại: {ex}")
+        return False
 
-        <!-- Loại chuyến (Quốc nội / Quốc tế) -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Loại chuyến:
-          </label>
-          <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-            <button onclick="setType('ALL')" id="btn-type-ALL" class="type-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm">Tất cả</button>
-            <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Quốc nội</button>
-            <button onclick="setType('International')" id="btn-type-International" class="type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white">Quốc tế</button>
-          </div>
-        </div>
+# 2. Quy trình cào dữ liệu SGN
+def scrape_viags():
+    db = init_firebase()
+    tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
+    today_str = datetime.now(tz_vn).strftime('%Y-%m-%d')
+    print(f"=======================================================")
+    print(f" BẮT ĐẦU CÀO TOÀN BỘ CHUYẾN BAY THẬT TÂN SƠN NHẤT (SGN)")
+    print(f" NGÀY: {today_str}")
+    print(f"=======================================================")
 
-        <!-- Tìm kiếm -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-            <i class="fa-solid fa-magnifying-glass text-vna-blue mr-1"></i> Tìm số hiệu / nơi đến:
-          </label>
-          <input type="text" id="searchInput" placeholder="VD: VN205, HAN, HUE..." class="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
-        </div>
+    all_flights = []
 
-      </div>
-    </div>
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width": 1440, "height": 900}
+        )
+        page = context.new_page()
 
-    <!-- Thống kê nhanh -->
-    <div class="flex items-center justify-between mb-4 px-1">
-      <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Đã sắp xếp theo giờ khởi hành / hạ cánh)
-      </div>
-      <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
-        <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
-      </div>
-    </div>
+        url = "https://www.viags.vn/en-US/flight-schedules"
+        print(f"1. Mở trang: {url}")
+        page.goto(url, wait_until="networkidle", timeout=60000)
+        time.sleep(3)
 
-    <!-- Bảng danh sách chuyến bay -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
-              <th class="py-3.5 px-4 font-bold text-center">Kế hoạch (Scheduled)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Ước tính (Estimated)</th>
-              <th class="py-3.5 px-4 font-bold">Chuyến bay</th>
-              <th class="py-3.5 px-4 font-bold">Chiều bay</th>
-              <th class="py-3.5 px-4 font-bold">Tuyến bay (Đến/Đi)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Cửa (Gate)</th>
-              <th class="py-3.5 px-4 font-bold text-center">Băng chuyền</th>
-              <th class="py-3.5 px-4 font-bold text-center">Trạng thái</th>
-              <th class="py-3.5 px-4 font-bold text-center">Flightradar24</th>
-            </tr>
-          </thead>
-          <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
-            <!-- Dữ liệu render tự động -->
-          </tbody>
-        </table>
-      </div>
-      <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
-        <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay nào khớp với bộ lọc đã chọn.</p>
-      </div>
-    </div>
+        # BƯỚC 1: CHUYỂN LOCATION SANG HO CHI MINH (Ô số 3, index 2)
+        print("2. Đang chọn Sân bay: Ho Chi Minh...")
+        select_dropdown_option(page, 2, "Ho Chi Minh")
+        time.sleep(2)
 
-  </main>
+        # BƯỚC 2: CHỌN TIME SANG ALL DAY (Ô số 5, index 3 trong danh sách dropdown)
+        select_dropdown_option(page, 3, "All day")
+        time.sleep(1)
 
-  <!-- Firebase Web SDK -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        # 4 Tổ hợp cần cào
+        scenarios = [
+            # 1. Quốc nội - Bay Đi
+            {"f_type": "Domestic", "f_name": "Domestic Flights", "d_type": "Departure", "d_name": "Departures"},
+            # 2. Quốc nội - Bay Đến
+            {"f_type": "Domestic", "f_name": "Domestic Flights", "d_type": "Arrival", "d_name": "Arrivals"},
+            # 3. Quốc tế - Bay Đi
+            {"f_type": "International", "f_name": "International Flights", "d_type": "Departure", "d_name": "Departures"},
+            # 4. Quốc tế - Bay Đến
+            {"f_type": "International", "f_name": "International Flights", "d_type": "Arrival", "d_name": "Arrivals"},
+        ]
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyCg4sWBwEwhgaIrNMKVPfCNN7mastS_Kko",
-      authDomain: "sgn-flight-status.firebaseapp.com",
-      projectId: "sgn-flight-status",
-      storageBucket: "sgn-flight-status.firebasestorage.app",
-      messagingSenderId: "141073829827",
-      appId: "1:141073829827:web:6c61bce7519e300b727776"
-    };
+        for sc in scenarios:
+            f_type = sc["f_type"]
+            d_type = sc["d_type"]
+            print(f"\n=======================================================")
+            print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ]")
+            print(f"=======================================================")
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+            # Chọn loại chuyến (Ô số 1, index 0)
+            select_dropdown_option(page, 0, sc["f_name"])
+            # Chọn chiều bay (Ô số 2, index 1)
+            select_dropdown_option(page, 1, sc["d_name"])
+            time.sleep(2)
 
-    let currentDirection = 'ALL';
-    let currentType = 'ALL';
-    let rawFlights = [];
+            # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
+            load_count = 0
+            while True:
+                load_more = page.get_by_text("Load more", exact=True)
+                if load_more.count() > 0 and load_more.first.is_visible():
+                    load_count += 1
+                    print(f"-> Bấm 'Load more' lần thứ {load_count}...")
+                    load_more.first.scroll_into_view_if_needed()
+                    load_more.first.click()
+                    time.sleep(2)
+                    if load_count >= 20:
+                        break
+                else:
+                    print(f"-> Đã tải xong toàn bộ danh sách (Đã bấm {load_count} lần 'Load more').")
+                    break
 
-    const datePicker = document.getElementById('datePicker');
-    // Mặc định lấy ngày hôm nay theo giờ địa phương
-    const now = new Date();
-    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-    datePicker.value = todayStr;
+            # Đọc tiêu đề các cột của bảng hiện tại
+            headers = [th.inner_text().strip().lower() for th in page.locator("table thead tr th").all()]
+            rows = page.locator("table tbody tr").all()
+            print(f"Tiêu đề bảng: {headers}")
+            print(f"Tổng số dòng cào được: {len(rows)}")
 
-    function listenToFlights(selectedDate) {
-      document.getElementById('loadingStatus').classList.remove('hidden');
-      const q = query(collection(db, "flights"), where("date", "==", selectedDate));
+            section_vna_count = 0
+            for row in rows:
+                tds = row.locator("td").all()
+                if not tds or len(tds) < 5:
+                    continue
 
-      onSnapshot(q, (snapshot) => {
-        rawFlights = [];
-        snapshot.forEach((doc) => {
-          rawFlights.push(doc.data());
-        });
-        document.getElementById('loadingStatus').classList.add('hidden');
-        renderFlights();
-      }, (err) => {
-        console.error("Lỗi đọc Firebase:", err);
-        document.getElementById('loadingStatus').innerText = "Lỗi kết nối dữ liệu!";
-      });
-    }
+                col_map = {}
+                for idx, td in enumerate(tds):
+                    h_name = headers[idx] if idx < len(headers) else f"col_{idx}"
+                    col_map[h_name] = td.inner_text().strip()
 
-    function renderFlights() {
-      const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
+                row_raw_text = " ".join(col_map.values()).upper()
+                flight_no = col_map.get("flights", "").replace(" ", "").upper()
+                airline = col_map.get("airlines", "")
 
-      // 1. Lọc theo Chiều bay, Loại chuyến và Từ khóa tìm kiếm
-      let filtered = rawFlights.filter(f => {
-        const fDir = (f.direction || '').toUpperCase();
-        const fType = (f.flight_type || '').toUpperCase();
+                # Nhận diện chuyến bay của Vietnam Airlines
+                is_vna = (
+                    flight_no.startswith("VN") or 
+                    "VIETNAM AIRLINES" in airline.upper() or 
+                    "VIETNAM AIRLINES" in row_raw_text
+                )
 
-        const matchDir = (currentDirection === 'ALL') || (fDir === currentDirection.toUpperCase());
-        const matchType = (currentType === 'ALL') || (fType === currentType.toUpperCase());
+                if not is_vna:
+                    match_vn = re.search(r'\b(VN\s*\d{2,4})\b', row_raw_text)
+                    if match_vn:
+                        is_vna = True
+                        flight_no = match_vn.group(1).replace(" ", "")
 
-        const matchSearch = !searchKey || 
-          (f.flight_no && f.flight_no.toUpperCase().includes(searchKey)) ||
-          (f.route && f.route.toUpperCase().includes(searchKey)) ||
-          (f.from_city && f.from_city.toUpperCase().includes(searchKey)) ||
-          (f.to_city && f.to_city.toUpperCase().includes(searchKey));
+                if is_vna and flight_no:
+                    # Tuyến bay: Destination nếu Bay Đi, From nếu Bay Đến
+                    route = col_map.get("destination", "") if d_type == "Departure" else col_map.get("from", "")
 
-        return matchDir && matchType && matchSearch;
-      });
+                    # Cổng (Gate): Chiều đi mới có Cổng
+                    gate = col_map.get("gate", "--") if d_type == "Departure" else "--"
+                    if not gate or gate == "":
+                        gate = "--"
 
-      // 2. YÊU CẦU: TỰ ĐỘNG SẮP XẾP THEO THỜI GIAN SCHEDULED (TỪ SÁNG ĐẾN ĐÊM)
-      filtered.sort((a, b) => {
-        const timeA = a.scheduled || '99:99';
-        const timeB = b.scheduled || '99:99';
-        return timeA.localeCompare(timeB);
-      });
+                    # Băng chuyền (Belt): Chiều đến mới có Băng chuyền
+                    belt = col_map.get("baggage belts", col_map.get("belt", "--")) if d_type == "Arrival" else "--"
+                    if not belt or belt == "":
+                        belt = "--"
 
-      document.getElementById('flightCount').innerText = filtered.length;
-      const tbody = document.getElementById('flightsTableBody');
-      tbody.innerHTML = '';
+                    remarks = col_map.get("remarks", "Normal")
+                    if not remarks:
+                        remarks = "Normal"
 
-      if (filtered.length === 0) {
-        document.getElementById('emptyMessage').classList.remove('hidden');
-        return;
-      }
-      document.getElementById('emptyMessage').classList.add('hidden');
+                    flight_item = {
+                        "date": today_str,
+                        "scheduled": col_map.get("scheduled", "--:--"),
+                        "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
+                        "destination_or_from": route,
+                        "route": route,
+                        "airline": "Vietnam Airlines",
+                        "flight_no": flight_no,
+                        "gate": gate,
+                        "belt": belt,
+                        "remarks": remarks,
+                        "flight_type": f_type,       # Domestic / International
+                        "direction": d_type,           # Departure / Arrival
+                        "airport": "SGN",
+                        "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
+                        "updated_at": firestore.SERVER_TIMESTAMP
+                    }
+                    all_flights.append(flight_item)
+                    section_vna_count += 1
 
-      filtered.forEach(f => {
-        const isDep = (f.direction || '').toUpperCase() === 'DEPARTURE';
-        const isInt = (f.flight_type || '').toUpperCase() === 'INTERNATIONAL';
+            print(f"-> Thu thập được {section_vna_count} chuyến bay Vietnam Airlines mục này.")
 
-        let badgeColor = "bg-slate-100 text-slate-700";
-        const rem = (f.remarks || '').toUpperCase();
-        if (rem.includes('DEPARTED') || rem.includes('ARRIVED') || rem.includes('LANDED')) {
-          badgeColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-        } else if (rem.includes('DELAY') || rem.includes('WAITING')) {
-          badgeColor = "bg-amber-50 text-amber-700 border border-amber-200";
-        } else if (rem.includes('CANCEL')) {
-          badgeColor = "bg-rose-50 text-rose-700 border border-rose-200 font-bold";
-        } else if (rem.includes('BOARDING') || rem.includes('OPEN') || rem.includes('CHECK-IN')) {
-          badgeColor = "bg-sky-50 text-sky-700 border border-sky-200 font-bold";
-        }
+        browser.close()
 
-        const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
-        const fr24Url = `https://www.flightradar24.com/data/flights/${flightNoClean}`;
+    print(f"\n=======================================================")
+    print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY THẬT SGN")
+    print(f"=======================================================")
 
-        const tr = document.createElement('tr');
-        tr.className = "hover:bg-slate-50/80 transition duration-150";
-        tr.innerHTML = `
-          <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}</td>
-          <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">
-            ${f.estimated || '--:--'}
-          </td>
-          <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">
-            <i class="fa-solid fa-plane text-vna-gold mr-1.5"></i> ${f.flight_no}
-          </td>
-          <td class="py-3 px-4 whitespace-nowrap">
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${isDep ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
-              <i class="fa-solid ${isDep ? 'fa-plane-departure' : 'fa-plane-arrival'} mr-1"></i>
-              ${isDep ? 'Bay Đi' : 'Bay Đến'}
-            </span>
-          </td>
-          <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">
-            ${f.route || f.destination_or_from || '--'}
-            <span class="ml-1 text-[11px] font-normal px-1.5 py-0.5 rounded ${isInt ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}">
-              ${isInt ? 'Quốc tế' : 'Quốc nội'}
-            </span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.gate || '--'}</span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <span class="px-2.5 py-1 rounded-full text-xs font-medium ${badgeColor}">
-              ${f.remarks || 'Bình thường'}
-            </span>
-          </td>
-          <td class="py-3 px-4 text-center whitespace-nowrap">
-            <a href="${fr24Url}" target="_blank" rel="noopener noreferrer" 
-               class="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
-              <i class="fa-solid fa-radar mr-1.5 text-xs"></i> Radar Live
-            </a>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
+    if len(all_flights) > 0:
+        # Xóa toàn bộ dữ liệu cũ ngày hôm nay trong Firebase để tránh xung đột
+        print("Đang xóa sạch dữ liệu cũ trong Firebase...")
+        docs = db.collection("flights").where("date", "==", today_str).stream()
+        for doc in docs:
+            doc.reference.delete()
 
-    datePicker.addEventListener('change', (e) => {
-      listenToFlights(e.target.value);
-    });
+        # Nạp dữ liệu mới sạch sẽ vào Firestore
+        batch = db.batch()
+        count = 0
+        for flight in all_flights:
+            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu (Tuyệt đối không xung đột)
+            doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
+            doc_ref = db.collection("flights").document(doc_id)
+            batch.set(doc_ref, flight)
+            count += 1
+            if count >= 400:
+                batch.commit()
+                batch = db.batch()
+                count = 0
 
-    document.getElementById('searchInput').addEventListener('input', renderFlights);
+        if count > 0:
+            batch.commit()
+        print("=== ĐÃ LƯU THÀNH CÔNG DỮ LIỆU THẬT 100% VÀO FIREBASE! ===")
+    else:
+        print("Cảnh báo: Không có dữ liệu để lưu.")
 
-    window.setDirection = (dir) => {
-      currentDirection = dir;
-      document.querySelectorAll('.dir-btn').forEach(b => {
-        b.className = 'dir-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white';
-      });
-      document.getElementById(`btn-dir-${dir}`).className = 'dir-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm';
-      renderFlights();
-    };
-
-    window.setType = (type) => {
-      currentType = type;
-      document.querySelectorAll('.type-btn').forEach(b => {
-        b.className = 'type-btn py-2 text-xs font-bold rounded-lg transition text-slate-600 hover:bg-white';
-      });
-      document.getElementById(`btn-type-${type}`).className = 'type-btn py-2 text-xs font-bold rounded-lg transition bg-vna-blue text-white shadow-sm';
-      renderFlights();
-    };
-
-    listenToFlights(todayStr);
-  </script>
-</body>
-</html>
+if __name__ == "__main__":
+    scrape_viags()
