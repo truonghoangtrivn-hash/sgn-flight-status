@@ -19,44 +19,51 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm chờ ASP.NET UpdatePanel tải xong ngầm 100%
+# Hàm chạy mã JavaScript nguyên bản (Không bị chặn Strict Mode)
+def exec_native_script(page, js_code):
+    page.evaluate("""(code) => {
+        const s = document.createElement('script');
+        s.textContent = code;
+        document.documentElement.appendChild(s);
+        s.remove();
+    }""", js_code)
+
+# Chờ hệ thống VIAGS tải xong ngầm
 def wait_for_aspnet(page):
     try:
         page.wait_for_function("""() => {
-            return window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager && 
+            return !window.Sys || !Sys.WebForms || !Sys.WebForms.PageRequestManager || 
                    !Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack();
-        }""", timeout=15000)
+        }""", timeout=20000)
     except:
         pass
     time.sleep(2)
 
-# Hàm đổi thông số VIAGS qua lệnh gốc ASP.NET
+# Kích hoạt bộ lọc SGN bằng mã gốc
 def set_viags_filter(page, station_val, trip_val):
-    page.evaluate(f"""() => {{
-        // Đặt sân bay SGN (Hồ Chí Minh)
+    js = f"""
+    (function() {{
         const ddlOrigin = document.querySelector('[name$="ddlOriginal"]');
         if (ddlOrigin) ddlOrigin.value = 'SGN';
 
-        // Đặt loại chuyến (DOM / INT)
         const ddlStation = document.querySelector('[name$="ddlStation"]');
         if (ddlStation) ddlStation.value = '{station_val}';
 
-        // Đặt chiều bay (D: Đi / A: Đến)
         const ddlTrip = document.querySelector('[name$="ddlTrip"]');
         if (ddlTrip) ddlTrip.value = '{trip_val}';
 
-        // Đặt khung giờ (All day: 0000-2359)
         const ddlSched = document.querySelector('[name$="ddlScheduled"]');
         if (ddlSched) ddlSched.value = '0000-2359';
 
-        // Kích hoạt lệnh gốc của VIAGS
         if (typeof __doPostBack === 'function') {{
             __doPostBack(ddlTrip ? ddlTrip.name : 'ctl00$mainContent$ctl00$ddlTrip', '');
         }}
-    }}""")
+    }})();
+    """
+    exec_native_script(page, js)
     wait_for_aspnet(page)
 
-# 2. Quy trình cào dữ liệu
+# 2. Quy trình cào dữ liệu SGN
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
@@ -81,7 +88,6 @@ def scrape_viags():
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(3)
 
-        # 4 Tổ hợp cần lấy:
         tasks = [
             {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
             {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
@@ -96,7 +102,7 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Kích hoạt bộ lọc bằng thông số F12 chính xác
+            # Kích hoạt bộ lọc
             set_viags_filter(page, task["station"], task["trip"])
 
             # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
@@ -112,7 +118,7 @@ def scrape_viags():
                     if load_count >= 25:
                         break
                 else:
-                    print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
+                    print(f"-> Đã tải xong toàn bộ danh sách (Đã bấm {load_count} lần 'Load more').")
                     break
 
             # Đọc tiêu đề các cột
@@ -136,7 +142,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Nhận diện chuyến bay của Vietnam Airlines (Mã VN hoặc hãng Vietnam Airlines)
+                # Lọc chuyến bay của Vietnam Airlines
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -150,15 +156,11 @@ def scrape_viags():
                         flight_no = match_vn.group(1).replace(" ", "")
 
                 if is_vna and flight_no:
-                    # Lấy tuyến bay: Destination nếu Bay Đi, From nếu Bay Đến
                     route = col_map.get("destination", "") if d_type == "Departure" else col_map.get("from", "")
-
-                    # Cổng (Gate): Chiều đi mới có Cổng
                     gate = col_map.get("gate", "--") if d_type == "Departure" else "--"
                     if not gate or gate == "":
                         gate = "--"
 
-                    # Băng chuyền (Belt): Chiều đến mới có Băng chuyền
                     belt = col_map.get("baggage belts", col_map.get("belt", "--")) if d_type == "Arrival" else "--"
                     if not belt or belt == "":
                         belt = "--"
@@ -196,13 +198,11 @@ def scrape_viags():
     print(f"=======================================================")
 
     if len(all_flights) > 0:
-        # Xóa sạch dữ liệu cũ ngày hôm nay trong Firebase để tránh xung đột
         print("Đang dọn dẹp dữ liệu cũ trong Firebase...")
         docs = db.collection("flights").where("date", "==", today_str).stream()
         for doc in docs:
             doc.reference.delete()
 
-        # Lưu dữ liệu mới chuẩn xác vào Firestore
         batch = db.batch()
         count = 0
         for flight in all_flights:
