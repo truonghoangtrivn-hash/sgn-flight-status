@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# 1. Khởi tạo kết nối Firebase
+# 1. Khởi tạo Firebase
 def init_firebase():
     sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     if not sa_json:
@@ -19,48 +19,44 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm click chọn dropdown mô phỏng người dùng
-def select_dropdown_option(page, dropdown_index, option_name):
-    print(f"-> Đang chọn ô số {dropdown_index + 1} sang: '{option_name}'...")
+# Hàm chờ ASP.NET UpdatePanel tải xong ngầm 100%
+def wait_for_aspnet(page):
     try:
-        # Bấm mở hộp chọn .nice-select theo thứ tự trên giao diện
-        # 0: Flights | 1: Departures/Arrivals | 2: Location | 3: Time
-        dropdowns = page.locator(".nice-select")
-        if dropdowns.count() > dropdown_index:
-            box = dropdowns.nth(dropdown_index)
-            box.scroll_into_view_if_needed()
-            box.click(timeout=4000)
-            time.sleep(0.6)
+        page.wait_for_function("""() => {
+            return window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager && 
+                   !Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack();
+        }""", timeout=15000)
+    except:
+        pass
+    time.sleep(2)
 
-            # Bấm vào dòng lựa chọn xuất hiện
-            opt = page.locator(f"li.option:has-text('{option_name}'), li:has-text('{option_name}')").first
-            opt.scroll_into_view_if_needed()
-            opt.click(timeout=4000)
-            time.sleep(3)
-            print(f"   ✓ Đã chọn thành công: {option_name}")
-            return True
-    except Exception as e:
-        print(f"   Lỗi khi click: {e}")
+# Hàm đổi thông số VIAGS qua lệnh gốc ASP.NET
+def set_viags_filter(page, station_val, trip_val):
+    page.evaluate(f"""() => {{
+        // Đặt sân bay SGN (Hồ Chí Minh)
+        const ddlOrigin = document.querySelector('[name$="ddlOriginal"]');
+        if (ddlOrigin) ddlOrigin.value = 'SGN';
 
-    # Dự phòng bằng lệnh JavaScript Click
-    try:
-        page.evaluate(f"""() => {{
-            const lis = Array.from(document.querySelectorAll('li'));
-            const target = lis.find(li => li.innerText.trim().toLowerCase() === '{option_name.lower()}');
-            if (target) {{
-                const p = target.closest('.nice-select');
-                if (p) p.click();
-                target.click();
-            }}
-        }}""")
-        time.sleep(3)
-        print(f"   ✓ JS Click dự phòng thành công cho: {option_name}")
-        return True
-    except Exception as ex:
-        print(f"   Thất bại: {ex}")
-        return False
+        // Đặt loại chuyến (DOM / INT)
+        const ddlStation = document.querySelector('[name$="ddlStation"]');
+        if (ddlStation) ddlStation.value = '{station_val}';
 
-# 2. Quy trình cào dữ liệu SGN
+        // Đặt chiều bay (D: Đi / A: Đến)
+        const ddlTrip = document.querySelector('[name$="ddlTrip"]');
+        if (ddlTrip) ddlTrip.value = '{trip_val}';
+
+        // Đặt khung giờ (All day: 0000-2359)
+        const ddlSched = document.querySelector('[name$="ddlScheduled"]');
+        if (ddlSched) ddlSched.value = '0000-2359';
+
+        // Kích hoạt lệnh gốc của VIAGS
+        if (typeof __doPostBack === 'function') {{
+            __doPostBack(ddlTrip ? ddlTrip.name : 'ctl00$mainContent$ctl00$ddlTrip', '');
+        }}
+    }}""")
+    wait_for_aspnet(page)
+
+# 2. Quy trình cào dữ liệu
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
@@ -85,57 +81,41 @@ def scrape_viags():
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(3)
 
-        # BƯỚC 1: CHUYỂN LOCATION SANG HO CHI MINH (Ô số 3, index 2)
-        print("2. Đang chọn Sân bay: Ho Chi Minh...")
-        select_dropdown_option(page, 2, "Ho Chi Minh")
-        time.sleep(2)
-
-        # BƯỚC 2: CHỌN TIME SANG ALL DAY (Ô số 5, index 3 trong danh sách dropdown)
-        select_dropdown_option(page, 3, "All day")
-        time.sleep(1)
-
-        # 4 Tổ hợp cần cào
-        scenarios = [
-            # 1. Quốc nội - Bay Đi
-            {"f_type": "Domestic", "f_name": "Domestic Flights", "d_type": "Departure", "d_name": "Departures"},
-            # 2. Quốc nội - Bay Đến
-            {"f_type": "Domestic", "f_name": "Domestic Flights", "d_type": "Arrival", "d_name": "Arrivals"},
-            # 3. Quốc tế - Bay Đi
-            {"f_type": "International", "f_name": "International Flights", "d_type": "Departure", "d_name": "Departures"},
-            # 4. Quốc tế - Bay Đến
-            {"f_type": "International", "f_name": "International Flights", "d_type": "Arrival", "d_name": "Arrivals"},
+        # 4 Tổ hợp cần lấy:
+        tasks = [
+            {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
+            {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
+            {"station": "INT", "trip": "D", "f_type": "International", "d_type": "Departure"},
+            {"station": "INT", "trip": "A", "f_type": "International", "d_type": "Arrival"}
         ]
 
-        for sc in scenarios:
-            f_type = sc["f_type"]
-            d_type = sc["d_type"]
+        for task in tasks:
+            f_type = task["f_type"]
+            d_type = task["d_type"]
             print(f"\n=======================================================")
-            print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ]")
+            print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Chọn loại chuyến (Ô số 1, index 0)
-            select_dropdown_option(page, 0, sc["f_name"])
-            # Chọn chiều bay (Ô số 2, index 1)
-            select_dropdown_option(page, 1, sc["d_name"])
-            time.sleep(2)
+            # Kích hoạt bộ lọc bằng thông số F12 chính xác
+            set_viags_filter(page, task["station"], task["trip"])
 
             # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
             load_count = 0
             while True:
-                load_more = page.get_by_text("Load more", exact=True)
-                if load_more.count() > 0 and load_more.first.is_visible():
+                load_more = page.locator("a:has-text('Load more'), button:has-text('Load more'), .btn-load-more, .btn:has-text('Load more')").first
+                if load_more.is_visible():
                     load_count += 1
-                    print(f"-> Bấm 'Load more' lần thứ {load_count}...")
-                    load_more.first.scroll_into_view_if_needed()
-                    load_more.first.click()
-                    time.sleep(2)
-                    if load_count >= 20:
+                    print(f"-> Bấm 'Load more' lần {load_count}...")
+                    load_more.scroll_into_view_if_needed()
+                    load_more.click()
+                    wait_for_aspnet(page)
+                    if load_count >= 25:
                         break
                 else:
-                    print(f"-> Đã tải xong toàn bộ danh sách (Đã bấm {load_count} lần 'Load more').")
+                    print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
                     break
 
-            # Đọc tiêu đề các cột của bảng hiện tại
+            # Đọc tiêu đề các cột
             headers = [th.inner_text().strip().lower() for th in page.locator("table thead tr th").all()]
             rows = page.locator("table tbody tr").all()
             print(f"Tiêu đề bảng: {headers}")
@@ -156,7 +136,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Nhận diện chuyến bay của Vietnam Airlines
+                # Nhận diện chuyến bay của Vietnam Airlines (Mã VN hoặc hãng Vietnam Airlines)
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -170,7 +150,7 @@ def scrape_viags():
                         flight_no = match_vn.group(1).replace(" ", "")
 
                 if is_vna and flight_no:
-                    # Tuyến bay: Destination nếu Bay Đi, From nếu Bay Đến
+                    # Lấy tuyến bay: Destination nếu Bay Đi, From nếu Bay Đến
                     route = col_map.get("destination", "") if d_type == "Departure" else col_map.get("from", "")
 
                     # Cổng (Gate): Chiều đi mới có Cổng
@@ -216,17 +196,16 @@ def scrape_viags():
     print(f"=======================================================")
 
     if len(all_flights) > 0:
-        # Xóa toàn bộ dữ liệu cũ ngày hôm nay trong Firebase để tránh xung đột
-        print("Đang xóa sạch dữ liệu cũ trong Firebase...")
+        # Xóa sạch dữ liệu cũ ngày hôm nay trong Firebase để tránh xung đột
+        print("Đang dọn dẹp dữ liệu cũ trong Firebase...")
         docs = db.collection("flights").where("date", "==", today_str).stream()
         for doc in docs:
             doc.reference.delete()
 
-        # Nạp dữ liệu mới sạch sẽ vào Firestore
+        # Lưu dữ liệu mới chuẩn xác vào Firestore
         batch = db.batch()
         count = 0
         for flight in all_flights:
-            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu (Tuyệt đối không xung đột)
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
@@ -238,7 +217,7 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG DỮ LIỆU THẬT 100% VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG DỮ LIỆU THẬT SGN VÀO FIREBASE! ===")
     else:
         print("Cảnh báo: Không có dữ liệu để lưu.")
 
