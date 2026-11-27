@@ -20,7 +20,7 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm lấy toàn bộ lịch bay đến SGN trực tiếp từ luồng tổng Flightradar24 (Không bị chặn)
+# Hàm lấy dữ liệu từ Flightradar24
 def get_all_fr24_sgn_arrivals():
     eta_map = {}
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
@@ -29,7 +29,7 @@ def get_all_fr24_sgn_arrivals():
         "Accept": "application/json"
     }
 
-    # 1. Lấy toàn bộ lịch hạ cánh Tân Sơn Nhất (SGN) trên FR24 (2 trang đầu, bao quát 200 chuyến)
+    # 1. Quét lịch hạ cánh Tân Sơn Nhất (SGN)
     for page_num in [1, 2]:
         try:
             url = f"https://api.flightradar24.com/common/v1/airport.json?code=sgn&plugin[]=&plugin-setting[schedule][mode]=arrivals&page={page_num}&limit=100"
@@ -46,7 +46,6 @@ def get_all_fr24_sgn_arrivals():
                         f_no_clean = f_no.replace(" ", "").upper()
                         time_info = f_info.get("time", {})
 
-                        # Giờ ETA ước tính hoặc thực tế
                         est_ts = time_info.get("estimated", {}).get("arrival")
                         real_ts = time_info.get("real", {}).get("arrival")
                         target_ts = est_ts or real_ts
@@ -64,11 +63,11 @@ def get_all_fr24_sgn_arrivals():
                                     eta_map[f_no_clean] = t_obj.strftime("%H:%M")
                                 except Exception:
                                     eta_map[f_no_clean] = t_str
-            time.sleep(0.8)
+            time.sleep(0.5)
         except Exception as e:
-            print(f"Lưu ý khi đọc airport arrivals trang {page_num}: {e}")
+            pass
 
-    # 2. Quét luồng radar trực tiếp (Live Feed) của đội bay Vietnam Airlines (HVN)
+    # 2. Quét radar trực tiếp (Live Feed) đội bay Vietnam Airlines
     try:
         feed_url = "https://data-cloud.flightradar24.com/zones/fcgi/feed.js?airline=HVN"
         req_feed = urllib.request.Request(feed_url, headers=headers)
@@ -85,8 +84,8 @@ def get_all_fr24_sgn_arrivals():
                             eta_str = dt.strftime('%H:%M')
                             vn_no = callsign.replace("HVN", "VN").replace(" ", "").upper()
                             eta_map[vn_no] = eta_str
-    except Exception as e:
-        print(f"Lưu ý khi đọc live feed FR24: {e}")
+    except Exception:
+        pass
 
     return eta_map
 
@@ -108,6 +107,7 @@ def scrape_viags():
 
     today_str = now_vn.strftime('%Y-%m-%d')
     tomorrow_str = (now_vn + timedelta(days=1)).strftime('%Y-%m-%d')
+    target_dates = [today_str, tomorrow_str]
     window_limit = now_vn + timedelta(hours=16)
     check_start = now_vn - timedelta(hours=1)
 
@@ -121,61 +121,50 @@ def scrape_viags():
         print(f" >>> [CHẾ ĐỘ SIÊU TỐC]: CẬP NHẬT FLIGHTRADAR24 (16H TỚI) <<<")
         print(f"=======================================================")
 
-        # Lấy bản đồ ETA tổng từ Flightradar24
         fr24_map = get_all_fr24_sgn_arrivals()
         print(f"✓ Đã nạp được {len(fr24_map)} chuyến bay từ luồng Flightradar24.")
 
-        docs_today = list(db.collection("flights").where("date", "==", today_str).stream())
-        docs_tomorrow = list(db.collection("flights").where("date", "==", tomorrow_str).stream())
-        all_docs = docs_today + docs_tomorrow
+        # Đọc dữ liệu từ gói tài liệu ngày hôm nay và ngày mai (Chỉ tốn đúng 2 lượt đọc!)
+        for d in target_dates:
+            try:
+                doc_ref = db.collection("daily_schedules").document(d)
+                doc_snap = doc_ref.get()
+                if doc_snap.exists:
+                    data = doc_snap.to_dict()
+                    flights_list = data.get("flights", [])
+                    updated = False
+                    for f in flights_list:
+                        if f.get("direction") == "Arrival":
+                            try:
+                                flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
+                                if check_start <= flight_dt <= window_limit:
+                                    f_no = f.get("flight_no", "").replace(" ", "").upper()
+                                    if f_no in fr24_map:
+                                        f["fr24_eta"] = fr24_map[f_no]
+                                        updated = True
+                                        print(f"   -> [CẬP NHẬT FR24] {f_no}: {f['fr24_eta']}")
+                            except Exception:
+                                pass
+                    if updated:
+                        # Ghi lại đúng 1 lần duy nhất cho toàn bộ ngày
+                        doc_ref.set({"date": d, "flights": flights_list, "updated_at": firestore.SERVER_TIMESTAMP})
+            except Exception as e:
+                print(f"Lưu ý Firebase: {e}")
 
-        updated_count = 0
-        batch = db.batch()
-        batch_count = 0
-
-        for doc in all_docs:
-            f = doc.to_dict()
-            if f.get("direction") == "Arrival":
-                try:
-                    flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
-                    # Bao quát trọn vẹn các chuyến bay trong vòng 16 tiếng tới
-                    if check_start <= flight_dt <= window_limit:
-                        f_no_clean = f.get("flight_no", "").replace(" ", "").upper()
-                        if f_no_clean in fr24_map:
-                            eta = fr24_map[f_no_clean]
-                            batch.update(doc.reference, {
-                                "fr24_eta": eta,
-                                "updated_at": firestore.SERVER_TIMESTAMP
-                            })
-                            batch_count += 1
-                            updated_count += 1
-                            print(f"   -> [CẬP NHẬT FR24] {f_no_clean} ({f.get('route', '')}): {eta}")
-
-                            if batch_count >= 400:
-                                batch.commit()
-                                batch = db.batch()
-                                batch_count = 0
-                except Exception:
-                    pass
-
-        if batch_count > 0:
-            batch.commit()
-
-        print(f"✓ Hoàn tất cập nhật ETA Flightradar24 cho {updated_count} chuyến bay trong vòng 16h!")
-        print("=== KẾT THÚC CẬP NHẬT SIÊU TỐC FR24 ===")
+        print("=== HOÀN TẤT CẬP NHẬT FR24 SIÊU TỐC ===")
         return
 
     # =======================================================
     # CHẾ ĐỘ TIÊU CHUẨN: CÀO VIAGS + QUÉT FLIGHTRADAR24
     # =======================================================
     if scrape_mode == "today_only":
-        target_dates = [today_str]
+        scrape_dates = [today_str]
         print(f">>> [CHẾ ĐỘ TỐC ĐỘ]: CHỈ CẬP NHẬT NGÀY HÔM NAY ({today_str}) <<<")
     else:
-        target_dates = [today_str, tomorrow_str]
-        print(f">>> [CHẾ ĐỘ TIÊU CHUẨN]: CẬP NHẬT CẢ 2 NGÀY ({target_dates}) <<<")
+        scrape_dates = [today_str, tomorrow_str]
+        print(f">>> [CHẾ ĐỘ TIÊU CHUẨN]: CẬP NHẬT CẢ 2 NGÀY ({scrape_dates}) <<<")
 
-    all_flights = []
+    all_flights_by_date = {d: [] for d in scrape_dates}
 
     SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
     SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
@@ -196,7 +185,7 @@ def scrape_viags():
             viewport={"width": 1440, "height": 900}
         )
 
-        for current_date in target_dates:
+        for current_date in scrape_dates:
             print(f"\n#######################################################")
             print(f" ####### BẮT ĐẦU QUÉT DỮ LIỆU NGÀY: {current_date} #######")
             print(f"#######################################################")
@@ -312,10 +301,9 @@ def scrape_viags():
                             "direction": sec["d_type"],
                             "airport": "SGN",
                             "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
-                            "fr24_eta": "--",
-                            "updated_at": firestore.SERVER_TIMESTAMP
+                            "fr24_eta": "--"
                         }
-                        all_flights.append(flight_item)
+                        all_flights_by_date[current_date].append(flight_item)
                         section_vna += 1
 
                 print(f"✓ [NGÀY {current_date}] LẤY ĐƯỢC: {section_vna} chuyến bay {sec['name']}.")
@@ -323,60 +311,44 @@ def scrape_viags():
 
         browser.close()
 
-    # KHỚP DỮ LIỆU TỪ LUỒNG TỔNG FLIGHTRADAR24 CHO TẤT CẢ CHUYẾN TRONG 16 TIẾNG TỚI
+    # KHỚP FR24 ETA CHO TẤT CẢ CHUYẾN TRONG 16 TIẾNG TỚI
     print(f"\n=======================================================")
-    print(f" BẮT ĐẦU CẬP NHẬT TẤT CẢ CHUYẾN ĐẾN TỪ FR24 TRONG 16H TỚI")
+    print(f" CẬP NHẬT TẤT CẢ CHUYẾN ĐẾN TỪ FR24 TRONG 16H TỚI")
     print(f"=======================================================")
-    
     fr24_map = get_all_fr24_sgn_arrivals()
-    print(f"✓ Luồng Flightradar24 trả về {len(fr24_map)} chuyến bay hạ cánh SGN.")
+    print(f"✓ Luồng Flightradar24 trả về {len(fr24_map)} chuyến bay.")
 
-    matched_fr24_count = 0
-    for f in all_flights:
-        if f["direction"] == "Arrival":
-            try:
-                flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
-                # Bao quát toàn bộ chuyến bay trong 16 tiếng tới
-                if check_start <= flight_dt <= window_limit:
-                    f_no_clean = f["flight_no"].replace(" ", "").upper()
-                    if f_no_clean in fr24_map:
-                        f["fr24_eta"] = fr24_map[f_no_clean]
-                        matched_fr24_count += 1
-                        print(f"   -> [KHỚP FR24 ETA] {f_no_clean} ({f['route']}): {f['fr24_eta']}")
-            except Exception:
-                pass
+    for d, flights_list in all_flights_by_date.items():
+        for f in flights_list:
+            if f["direction"] == "Arrival":
+                try:
+                    flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
+                    if check_start <= flight_dt <= window_limit:
+                        f_no = f["flight_no"].replace(" ", "").upper()
+                        if f_no in fr24_map:
+                            f["fr24_eta"] = fr24_map[f_no]
+                            print(f"   -> [KHỚP FR24 ETA] {f_no} ({f['route']}): {f['fr24_eta']}")
+                except Exception:
+                    pass
 
-    print(f"✓ Đã khớp thành công giờ ETA Flightradar24 cho {matched_fr24_count} chuyến bay!")
-
-    # LƯU VÀO FIREBASE
+    # LƯU VÀO FIREBASE THEO GÓI NGÀY (CHỈ TỐN ĐÚNG 1 LƯỢT GHI MỖI NGÀY - KHÔNG LO 429!)
     print(f"\n=======================================================")
-    print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY THẬT SGN")
+    print(f" LƯU GÓI DỮ LIỆU TỐI ƯU VÀO FIREBASE")
     print(f"=======================================================")
+    for d, flights_list in all_flights_by_date.items():
+        if len(flights_list) > 0:
+            try:
+                # 1. Lưu gói tổng vào collection 'daily_schedules' (Chỉ 1 lượt ghi!)
+                db.collection("daily_schedules").document(d).set({
+                    "date": d,
+                    "flights": flights_list,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
+                print(f"✓ Đã lưu thành công {len(flights_list)} chuyến bay ngày {d} (chỉ tốn 1 lượt ghi).")
+            except Exception as e:
+                print(f"Lưu ý khi ghi Firebase: {e}")
 
-    if len(all_flights) > 0:
-        print("Đang dọn dẹp dữ liệu cũ của các ngày này trong Firebase...")
-        for d in target_dates:
-            docs = db.collection("flights").where("date", "==", d).stream()
-            for doc in docs:
-                doc.reference.delete()
-
-        batch = db.batch()
-        count = 0
-        for flight in all_flights:
-            doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
-            doc_ref = db.collection("flights").document(doc_id)
-            batch.set(doc_ref, flight)
-            count += 1
-            if count >= 400:
-                batch.commit()
-                batch = db.batch()
-                count = 0
-
-        if count > 0:
-            batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY VÀO FIREBASE! ===")
-    else:
-        print("Cảnh báo: Không có dữ liệu để lưu.")
+    print("=== ĐÃ HOÀN TẤT THU THẬP VÀ LƯU DỮ LIỆU THÀNH CÔNG! ===")
 
 if __name__ == "__main__":
     scrape_viags()
