@@ -19,7 +19,7 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Đổi select và chờ phản hồi
+# Hàm đổi select và chờ hệ thống ASP.NET nạp xong
 def change_select(page, selector, target_val):
     current = page.locator(selector).input_value()
     if current != target_val:
@@ -30,7 +30,7 @@ def change_select(page, selector, target_val):
             time.sleep(3)
         except Exception:
             page.select_option(selector, value=target_val)
-            time.sleep(3.5)
+            time.sleep(4)
 
 # 2. Quy trình cào dữ liệu SGN
 def scrape_viags():
@@ -79,33 +79,43 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Chọn Loại chuyến và Chiều bay
+            # Đổi loại chuyến và chiều bay
             change_select(page, SEL_STATION, task["station"])
             change_select(page, SEL_TRIP, task["trip"])
+            time.sleep(3) # Chờ bảng mới ổn định
 
-            # BẤM NÚT VÀNG 'LOAD MORE' - CÓ KIỂM TRA HIDDEN CHUẨN XÁC
+            # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
             load_count = 0
+            empty_retry = 0
             while True:
-                # Chỉ tìm nút Load more đang hiển thị (KHÔNG có class hidden)
-                load_more = page.locator(".c-btn1:not(.hidden):visible, span:not(.hidden):has-text('Load more'):visible")
+                # Cuộn chuột xuống đáy trang để ép hiển thị nút Load more
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1)
+
+                load_more = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
                 
                 if load_more.count() > 0 and load_more.first.is_visible():
+                    empty_retry = 0
                     load_count += 1
                     print(f"-> Bấm 'Load more' lần {load_count}...")
                     try:
+                        load_more.first.scroll_into_view_if_needed()
                         load_more.first.click(timeout=3000)
+                        time.sleep(2.5) # Đợi nạp thêm chuyến bay
+                    except Exception as e:
                         time.sleep(2)
-                    except Exception:
-                        print("-> Nút Load more đã ẩn hoặc hết danh sách.")
-                        break
                     
                     if load_count >= 25:
                         break
                 else:
-                    print(f"-> Đã tải xong toàn bộ danh sách (Nút đã ẩn sau {load_count} lần bấm).")
-                    break
+                    # Kiểm tra lại lần 2 để chắc chắn rằng đã tải hết sạch thật sự
+                    empty_retry += 1
+                    if empty_retry >= 2:
+                        print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
+                        break
+                    time.sleep(2)
 
-            # Đọc tiêu đề các cột của bảng
+            # Đọc tiêu đề các cột
             headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
             rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
             print(f"Tiêu đề bảng: {headers}")
@@ -126,7 +136,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Nhận diện chuyến bay của Vietnam Airlines (VN hoặc Vietnam Airlines)
+                # Lọc chuyến bay của Vietnam Airlines
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
