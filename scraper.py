@@ -19,49 +19,18 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm chạy mã JavaScript nguyên bản (Không bị chặn Strict Mode)
-def exec_native_script(page, js_code):
-    page.evaluate("""(code) => {
-        const s = document.createElement('script');
-        s.textContent = code;
-        document.documentElement.appendChild(s);
-        s.remove();
-    }""", js_code)
-
-# Chờ hệ thống VIAGS tải xong ngầm
-def wait_for_aspnet(page):
-    try:
-        page.wait_for_function("""() => {
-            return !window.Sys || !Sys.WebForms || !Sys.WebForms.PageRequestManager || 
-                   !Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack();
-        }""", timeout=20000)
-    except:
-        pass
-    time.sleep(2)
-
-# Kích hoạt bộ lọc SGN bằng mã gốc
-def set_viags_filter(page, station_val, trip_val):
-    js = f"""
-    (function() {{
-        const ddlOrigin = document.querySelector('[name$="ddlOriginal"]');
-        if (ddlOrigin) ddlOrigin.value = 'SGN';
-
-        const ddlStation = document.querySelector('[name$="ddlStation"]');
-        if (ddlStation) ddlStation.value = '{station_val}';
-
-        const ddlTrip = document.querySelector('[name$="ddlTrip"]');
-        if (ddlTrip) ddlTrip.value = '{trip_val}';
-
-        const ddlSched = document.querySelector('[name$="ddlScheduled"]');
-        if (ddlSched) ddlSched.value = '0000-2359';
-
-        if (typeof __doPostBack === 'function') {{
-            __doPostBack(ddlTrip ? ddlTrip.name : 'ctl00$mainContent$ctl00$ddlTrip', '');
-        }}
-    }})();
-    """
-    exec_native_script(page, js)
-    wait_for_aspnet(page)
+# Hàm đổi select và chờ máy chủ VIAGS phản hồi
+def change_select(page, selector, target_val):
+    current = page.locator(selector).input_value()
+    if current != target_val:
+        print(f"-> Đổi {selector} sang '{target_val}'...")
+        try:
+            with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
+                page.select_option(selector, value=target_val)
+            time.sleep(3)
+        except Exception:
+            page.select_option(selector, value=target_val)
+            time.sleep(3.5)
 
 # 2. Quy trình cào dữ liệu SGN
 def scrape_viags():
@@ -88,6 +57,16 @@ def scrape_viags():
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(3)
 
+        # ID các ô chọn chuẩn xác theo F12
+        SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
+        SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
+        SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
+
+        # BƯỚC 1: Chọn sân bay Sài Gòn (SGN)
+        print("2. Đang chọn Sân bay: Ho Chi Minh (SGN)...")
+        change_select(page, SEL_ORIGIN, "SGN")
+
+        # 4 Tổ hợp cần lấy dữ liệu
         tasks = [
             {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
             {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
@@ -102,28 +81,35 @@ def scrape_viags():
             print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
             print(f"=======================================================")
 
-            # Kích hoạt bộ lọc
-            set_viags_filter(page, task["station"], task["trip"])
+            # Chọn Loại chuyến (DOM / INT)
+            change_select(page, SEL_STATION, task["station"])
+            # Chọn Chiều bay (D: Đi / A: Đến)
+            change_select(page, SEL_TRIP, task["trip"])
 
-            # BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN KHI HẾT SẠCH
+            # BƯỚC QUAN TRỌNG: BẤM NÚT VÀNG 'LOAD MORE' QUA CLASS .c-btn1 ĐÃ SOI F12
             load_count = 0
             while True:
-                load_more = page.locator("a:has-text('Load more'), button:has-text('Load more'), .btn-load-more, .btn:has-text('Load more')").first
-                if load_more.is_visible():
+                load_more = page.locator(".c-btn1:has-text('Load more'), span:has-text('Load more')")
+                if load_more.count() > 0 and load_more.first.is_visible():
                     load_count += 1
                     print(f"-> Bấm 'Load more' lần {load_count}...")
-                    load_more.scroll_into_view_if_needed()
-                    load_more.click()
-                    wait_for_aspnet(page)
-                    if load_count >= 25:
+                    try:
+                        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=15000):
+                            load_more.first.click()
+                        time.sleep(2)
+                    except:
+                        load_more.first.click()
+                        time.sleep(3)
+
+                    if load_count >= 25: # Tải tối đa 25 trang liên tục
                         break
                 else:
-                    print(f"-> Đã tải xong toàn bộ danh sách (Đã bấm {load_count} lần 'Load more').")
+                    print(f"-> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
                     break
 
-            # Đọc tiêu đề các cột
-            headers = [th.inner_text().strip().lower() for th in page.locator("table thead tr th").all()]
-            rows = page.locator("table tbody tr").all()
+            # Đọc tiêu đề các cột của bảng
+            headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
+            rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
             print(f"Tiêu đề bảng: {headers}")
             print(f"Tổng số dòng cào được: {len(rows)}")
 
@@ -142,7 +128,7 @@ def scrape_viags():
                 flight_no = col_map.get("flights", "").replace(" ", "").upper()
                 airline = col_map.get("airlines", "")
 
-                # Lọc chuyến bay của Vietnam Airlines
+                # Nhận diện chuyến bay của Vietnam Airlines
                 is_vna = (
                     flight_no.startswith("VN") or 
                     "VIETNAM AIRLINES" in airline.upper() or 
@@ -206,6 +192,7 @@ def scrape_viags():
         batch = db.batch()
         count = 0
         for flight in all_flights:
+            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
