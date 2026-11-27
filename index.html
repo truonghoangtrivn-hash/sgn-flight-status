@@ -50,7 +50,7 @@
           <i class="fa-solid fa-plane-departure text-vna-gold text-2xl sm:text-3xl"></i>
           <div>
             <h1 class="text-xl sm:text-2xl font-bold tracking-tight">SGN FLIGHT MONITOR</h1>
-            <p class="text-xs text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS</p>
+            <p class="text-xs text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS & Flightradar24</p>
           </div>
         </div>
         
@@ -67,7 +67,7 @@
       </div>
     </header>
 
-    <!-- 2. Thanh điều khiển Bộ lọc (ĐÃ BỎ NÚT ALL - CHỈ CÒN DOM/INTL VÀ DEP/ARR) -->
+    <!-- 2. Thanh điều khiển Bộ lọc -->
     <div class="bg-white/95 backdrop-blur border-b border-slate-200">
       <div class="max-w-7xl mx-auto px-4 py-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -80,7 +80,7 @@
             <input type="date" id="datePicker" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
           </div>
 
-          <!-- TYPE: DOM | INTL (BỎ ALL) -->
+          <!-- TYPE: DOM | INTL -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Type:
@@ -91,7 +91,7 @@
             </div>
           </div>
 
-          <!-- BOUND: DEP | ARR (BỎ ALL) -->
+          <!-- BOUND: DEP | ARR -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Bound:
@@ -149,7 +149,7 @@
 
   </main>
 
-  <!-- Firebase Web SDK & Logic Ghi Nhớ Lựa Chọn (LocalStorage) -->
+  <!-- Firebase Web SDK & Logic Hiển Thị ETA -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -166,7 +166,6 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // ĐỌC BỘ NHỚ LOCALSTORAGE ĐỂ KHÔI PHỤC LỰA CHỌN CŨ (Mặc định nếu chưa có: DOM và DEP)
     let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
     let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
     
@@ -180,9 +179,7 @@
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     datePicker.value = todayStr;
 
-    // Cập nhật giao diện các nút bấm theo đúng bộ nhớ
     function updateButtonUI() {
-      // Cập nhật Type (DOM / INTL)
       document.querySelectorAll('.type-btn').forEach(b => {
         b.className = 'type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
       });
@@ -191,7 +188,6 @@
         activeTypeBtn.className = 'type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
       }
 
-      // Cập nhật Bound (DEP / ARR)
       document.querySelectorAll('.dir-btn').forEach(b => {
         b.className = 'dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
       });
@@ -201,7 +197,6 @@
       }
     }
 
-    // Tính ngày D+1
     function calculateNextDate(dateStr) {
       const parts = dateStr.split('-');
       const d = new Date(parts[0], parts[1] - 1, parts[2]);
@@ -238,7 +233,6 @@
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
       const filtered = rawFlights.filter(f => {
-        // Bỏ các chuyến Cancel
         const rem = (f.remarks || '').toUpperCase();
         if (rem.includes('CANCEL')) {
           return false;
@@ -254,7 +248,6 @@
           return false;
         }
 
-        // Lọc chuẩn xác theo bộ nhớ Type & Bound
         const fDir = (f.direction || '').toUpperCase();
         const fType = (f.flight_type || '').toUpperCase();
 
@@ -279,12 +272,12 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // CẬP NHẬT HEADER (Chỉ có 2 trường hợp: DEP hoặc ARR)
+      // CẬP NHẬT HEADER CHUẨN TIẾNG ANH
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
       if (currentDirection === 'Departure') {
-        // FLT NO. - DEST - STD - ETD - GATE - STATUS
+        // DEP: FLT NO. - DEST - STD - ETD - GATE - STATUS
         headerHtml = `
           <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
             <th class="py-3.5 px-4 font-bold">FLT NO.</th>
@@ -296,7 +289,7 @@
           </tr>
         `;
       } else {
-        // FLT NO. - FROM - STA - ETA - Flightradar24 - BELT - STATUS
+        // ARR: FLT NO. - FROM - STA - ETA - Flightradar24 - BELT - STATUS
         headerHtml = `
           <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
             <th class="py-3.5 px-4 font-bold">FLT NO.</th>
@@ -375,7 +368,29 @@
           ? `<span class="text-[11px] text-sky-600 font-semibold ml-1">(+1)</span>` 
           : '';
 
+        // HIỂN THỊ CỘT FLIGHTRADAR24: NẾU CÓ GIỜ ETA THÌ HIỆN GIỜ + NÚT RADAR
+        let fr24Cell = '';
+        if (f.fr24_eta && f.fr24_eta !== '--') {
+          fr24Cell = `
+            <div class="flex items-center justify-center space-x-1.5">
+              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ hạ cánh thực tế (ETA) từ Flightradar24">
+                ${f.fr24_eta}
+              </span>
+              <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" title="Xem vị trí máy bay trên Radar" class="inline-flex items-center p-1 rounded text-yellow-500 hover:text-yellow-600 hover:bg-slate-100 transition">
+                <i class="fa-solid fa-radar text-xs"></i>
+              </a>
+            </div>
+          `;
+        } else {
+          fr24Cell = `
+            <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
+              <i class="fa-solid fa-radar mr-1 text-[10px]"></i> Radar Live
+            </a>
+          `;
+        }
+
         if (currentDirection === 'Departure') {
+          // DEP
           rowsHtml += `
             <tr ${trId} class="${trClass}">
               <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
@@ -387,17 +402,14 @@
             </tr>
           `;
         } else {
+          // ARR: FLT NO. - FROM - STA - ETA - Flightradar24 (Giờ ETA thực tế) - BELT - STATUS
           rowsHtml += `
             <tr ${trId} class="${trClass}">
               <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
               <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${cityName}</td>
               <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
               <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap">
-                <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
-                  <i class="fa-solid fa-radar mr-1.5 text-xs"></i> Radar Live
-                </a>
-              </td>
+              <td class="py-3 px-4 text-center whitespace-nowrap">${fr24Cell}</td>
               <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span></td>
               <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${badgeColor}">${f.remarks || 'Normal'}</span></td>
             </tr>
@@ -426,25 +438,22 @@
 
     document.getElementById('searchInput').addEventListener('input', () => renderFlights(false));
 
-    // LƯU VÀ GHI NHỚ BOUND: DEP / ARR
     window.setDirection = (dir) => {
       if (currentDirection === dir) return;
       currentDirection = dir;
-      localStorage.setItem('vna_selected_bound', dir); // Lưu bộ nhớ
+      localStorage.setItem('vna_selected_bound', dir);
       updateButtonUI();
       renderFlights(false);
     };
 
-    // LƯU VÀ GHI NHỚ TYPE: DOM / INTL
     window.setType = (type) => {
       if (currentType === type) return;
       currentType = type;
-      localStorage.setItem('vna_selected_type', type); // Lưu bộ nhớ
+      localStorage.setItem('vna_selected_type', type);
       updateButtonUI();
       renderFlights(false);
     };
 
-    // Nút Cập nhật hôm nay
     window.triggerRefreshToday = async () => {
       const btn = document.getElementById('btnRefresh');
       const icon = document.getElementById('refreshIcon');
@@ -497,7 +506,6 @@
       }
     };
 
-    // Khởi động giao diện ban đầu theo đúng bộ nhớ
     updateButtonUI();
     listenToFlights(todayStr);
   </script>
