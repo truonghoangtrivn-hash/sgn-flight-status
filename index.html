@@ -54,12 +54,20 @@
           </div>
         </div>
         
-        <!-- Nút Cập Nhật Ngay & Trạng thái -->
+        <!-- Cụm nút Cập Nhật & Trạng thái -->
         <div class="mt-2 sm:mt-0 flex items-center space-x-2">
+          <!-- Nút Cập nhật hôm nay (VIAGS) -->
           <button id="btnRefresh" onclick="triggerRefreshToday()" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-yellow-400 active:scale-95 transition shadow-sm cursor-pointer">
             <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5"></i>
             <span id="refreshText">Cập nhật hôm nay (D)</span>
           </button>
+
+          <!-- NÚT MỚI: CẬP NHẬT RIÊNG FLIGHTRADAR24 (ETA) -->
+          <button id="btnRefreshFR24" onclick="triggerRefreshFR24()" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer">
+            <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5"></i>
+            <span id="refreshTextFR24">Cập nhật FR24</span>
+          </button>
+
           <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             <span class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span> Tự động
           </span>
@@ -166,7 +174,6 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // GHI NHỚ LỰA CHỌN TYPE & BOUND TỪ LOCALSTORAGE
     let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
     let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
     
@@ -175,7 +182,6 @@
     let selectedDate = '';
     let nextDateStr = '';
 
-    // GHI NHỚ NGÀY TỪ LOCALSTORAGE (KHÔNG BAO GIỜ TỰ NHẢY NGÀY)
     const datePicker = document.getElementById('datePicker');
     const now = new Date();
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
@@ -266,7 +272,7 @@
         return matchDir && matchType && matchSearch;
       });
 
-      // Sắp xếp: Ngày D (03:00 -> 23:59) rồi đến Ngày D+1 (00:00 -> 02:59)
+      // Sắp xếp thời gian Scheduled
       filtered.sort((a, b) => {
         const prioA = (a.date === selectedDate) ? 0 : 1;
         const prioB = (b.date === selectedDate) ? 0 : 1;
@@ -308,7 +314,7 @@
       }
       thead.innerHTML = headerHtml;
 
-      // TÌM CHUYẾN BAY TIÊU ĐIỂM ĐỂ CANH GIỮA MÀN HÌNH:
+      // TÌM CHUYẾN BAY TIÊU ĐIỂM ĐỂ CANH GIỮA MÀN HÌNH
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       const isLateNight = currentHHMM < '03:00';
@@ -316,8 +322,7 @@
       let targetRowIndex = -1;
 
       if (currentDirection === 'Arrival') {
-        // ĐỐI VỚI CHUYẾN ĐẾN (ARR): Ưu tiên tìm chuyến ĐANG ĐÁP ĐẦU TIÊN THEO FLIGHTRADAR24
-        // 1. Tìm chuyến có trạng thái Landing/Arrival
+        // Ưu tiên tìm chuyến Đang đáp theo Flightradar24
         for (let i = 0; i < filtered.length; i++) {
           const rem = (filtered[i].remarks || '').toUpperCase();
           if (rem.includes('LANDING') || rem.includes('ARRIVING') || rem.includes('APPROACH')) {
@@ -325,7 +330,6 @@
             break;
           }
         }
-        // 2. Nếu chưa có, tìm chuyến đầu tiên có giờ ETA từ Flightradar24 sắp đến
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
             const frEta = filtered[i].fr24_eta;
@@ -337,7 +341,6 @@
         }
       }
 
-      // 3. Nếu là Bay Đi (DEP) hoặc chưa tìm thấy chuyến đáp, canh theo giờ hiện tại
       if (targetRowIndex === -1) {
         for (let i = 0; i < filtered.length; i++) {
           const f = filtered[i];
@@ -444,7 +447,6 @@
 
       tbody.innerHTML = rowsHtml;
 
-      // TỰ ĐỘNG CUỘN ĐƯA CHUYẾN TIÊU ĐIỂM VÀO GIỮA MÀN HÌNH
       if (shouldScroll && isInitialLoad) {
         isInitialLoad = false;
         setTimeout(() => {
@@ -456,10 +458,9 @@
       }
     }
 
-    // GHI NHỚ NGÀY KHI NGƯỜI DÙNG THAY ĐỔI Ô LỊCH
     datePicker.addEventListener('change', (e) => {
       isInitialLoad = true;
-      localStorage.setItem('vna_selected_date', e.target.value); // Lưu vào bộ nhớ vĩnh viễn
+      localStorage.setItem('vna_selected_date', e.target.value);
       listenToFlights(e.target.value);
     });
 
@@ -481,7 +482,7 @@
       renderFlights(false);
     };
 
-    // Nút Cập nhật hôm nay: KHÔNG BAO GIỜ TỰ NHẢY NGÀY CỦA NGƯỜI DÙNG
+    // 1. Nút Cập nhật hôm nay (VIAGS)
     window.triggerRefreshToday = async () => {
       const btn = document.getElementById('btnRefresh');
       const icon = document.getElementById('refreshIcon');
@@ -499,7 +500,6 @@
         const data = await res.json();
 
         if (res.ok) {
-          // GIỮ NGUYÊN NGÀY ĐANG CHỌN, KHÔNG BỊ NHẢY NGÀY
           let countdown = 60;
           const timer = setInterval(() => {
             countdown--;
@@ -526,6 +526,53 @@
         btn.classList.remove('opacity-75', 'cursor-not-allowed');
         icon.classList.remove('fa-spin');
         text.innerText = 'Cập nhật hôm nay (D)';
+      }
+    };
+
+    // 2. NÚT MỚI: CẬP NHẬT RIÊNG FLIGHTRADAR24 (ETA SIÊU TỐC 30S)
+    window.triggerRefreshFR24 = async () => {
+      const btn = document.getElementById('btnRefreshFR24');
+      const icon = document.getElementById('refreshIconFR24');
+      const text = document.getElementById('refreshTextFR24');
+
+      if (btn.disabled) return;
+
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      icon.classList.add('fa-spin');
+      text.innerText = 'Đang gửi...';
+
+      try {
+        const res = await fetch('/api/refresh-fr24', { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok) {
+          let countdown = 30; // Chạy siêu tốc trong 30 giây
+          const timer = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+              text.innerText = `Quét FR24... (${countdown}s)`;
+            } else {
+              clearInterval(timer);
+              btn.disabled = false;
+              btn.classList.remove('opacity-75', 'cursor-not-allowed');
+              icon.classList.remove('fa-spin');
+              text.innerText = 'Cập nhật FR24';
+            }
+          }, 1000);
+        } else {
+          alert('Lỗi: ' + (data.error || 'Không thể gửi lệnh'));
+          btn.disabled = false;
+          btn.classList.remove('opacity-75', 'cursor-not-allowed');
+          icon.classList.remove('fa-spin');
+          text.innerText = 'Cập nhật FR24';
+        }
+      } catch (err) {
+        alert('Lỗi kết nối máy chủ!');
+        btn.disabled = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        icon.classList.remove('fa-spin');
+        text.innerText = 'Cập nhật FR24';
       }
     };
 
