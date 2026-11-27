@@ -66,7 +66,7 @@
             <input type="date" id="datePicker" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
           </div>
 
-          <!-- 1. TYPE ĐẶT TRƯỚC: ALL | DOM | INTL -->
+          <!-- TYPE: ALL | DOM | INTL -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Type:
@@ -78,7 +78,7 @@
             </div>
           </div>
 
-          <!-- 2. BOUND ĐẶT SAU: ALL | DEP | ARR -->
+          <!-- BOUND: ALL | DEP | ARR -->
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
               <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Bound:
@@ -110,7 +110,7 @@
     <!-- Thống kê nhanh & Trạng thái tải -->
     <div class="flex items-center justify-between mb-3 px-1">
       <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay Vietnam Airlines
+        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay hoạt động (Đã ẩn các chuyến Cancel)
       </div>
       <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
         <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
@@ -125,13 +125,13 @@
             <!-- Header thay đổi theo Bound -->
           </thead>
           <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
-            <!-- Render dữ liệu siêu tốc -->
+            <!-- Render dữ liệu -->
           </tbody>
         </table>
       </div>
       <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
         <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay Vietnam Airlines nào khớp với bộ lọc.</p>
+        <p class="font-medium">Không tìm thấy chuyến bay nào khớp với bộ lọc đã chọn.</p>
       </div>
     </div>
 
@@ -172,25 +172,29 @@
         rawFlights = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
-          // Chỉ lấy duy nhất các chuyến bay của Vietnam Airlines (Mã VN)
           const fNo = (data.flight_no || '').toUpperCase().trim();
           if (fNo.startsWith("VN")) {
             rawFlights.push(data);
           }
         });
         document.getElementById('loadingStatus').classList.add('hidden');
-        renderFlights(true); // Chỉ cuộn trang khi nạp dữ liệu từ Firebase
+        renderFlights(true);
       }, (err) => {
         console.error("Lỗi đọc Firebase:", err);
         document.getElementById('loadingStatus').innerText = "Lỗi kết nối dữ liệu!";
       });
     }
 
-    // Hàm render tối ưu hóa siêu tốc (Instant Render)
     function renderFlights(shouldScroll = false) {
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
       const filtered = rawFlights.filter(f => {
+        // 1. TỰ ĐỘNG BỎ CÁC CHUYẾN BAY BỊ CANCEL
+        const rem = (f.remarks || '').toUpperCase();
+        if (rem.includes('CANCEL')) {
+          return false;
+        }
+
         const fDir = (f.direction || '').toUpperCase();
         const fType = (f.flight_type || '').toUpperCase();
 
@@ -214,7 +218,7 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // 1. CẬP NHẬT HEADER BẢNG
+      // Cập nhật Header
       const thead = document.getElementById('flightsTableHead');
       let thRouteText = "Tuyến bay";
       if (currentDirection === 'Departure') thRouteText = "Nơi đến (Destination)";
@@ -250,7 +254,7 @@
       headerHtml += `</tr>`;
       thead.innerHTML = headerHtml;
 
-      // 2. TÌM CHUYẾN BAY TRÙNG GIỜ HIỆN TẠI
+      // Tìm chuyến bay trùng giờ hiện tại để canh giữa màn hình
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       
@@ -265,7 +269,7 @@
         targetRowIndex = filtered.length - 1;
       }
 
-      // 3. TẠO HTML MỘT LẦN DUY NHẤT (SIÊU TỐC - KHÔNG BỊ GIẬT)
+      // Render dữ liệu (Không còn nhãn 'Hiện tại' và không còn chuyến 'Cancel')
       const tbody = document.getElementById('flightsTableBody');
 
       if (filtered.length === 0) {
@@ -286,8 +290,6 @@
           badgeColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
         } else if (rem.includes('DELAY') || rem.includes('WAITING')) {
           badgeColor = "bg-amber-50 text-amber-700 border border-amber-200";
-        } else if (rem.includes('CANCEL')) {
-          badgeColor = "bg-rose-50 text-rose-700 border border-rose-200 font-bold";
         } else if (rem.includes('BOARDING') || rem.includes('OPEN') || rem.includes('CHECK-IN')) {
           badgeColor = "bg-sky-50 text-sky-700 border border-sky-200 font-bold";
         }
@@ -295,18 +297,16 @@
         const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
         const cityName = f.route || f.destination_or_from || '--';
 
+        // Đánh dấu nhẹ viền cho chuyến bay ở mốc giờ hiện tại (không hiện chữ)
         const trClass = isCurrentFocus 
-          ? "bg-amber-50/80 border-l-4 border-l-vna-gold hover:bg-amber-100/70 transition" 
+          ? "bg-amber-50/50 border-l-4 border-l-vna-gold hover:bg-slate-50/80 transition" 
           : "hover:bg-slate-50/80 transition";
 
         const trId = isCurrentFocus ? 'id="currentFocusFlight"' : '';
 
         rowsHtml += `
           <tr ${trId} class="${trClass}">
-            <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">
-              ${f.scheduled || '--:--'}
-              ${isCurrentFocus ? '<span class="ml-1 text-[10px] bg-vna-gold text-slate-900 font-bold px-1.5 py-0.5 rounded-full">Hiện tại</span>' : ''}
-            </td>
+            <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}</td>
             <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
             <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
             <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${cityName}</td>
@@ -345,10 +345,9 @@
         rowsHtml += `</tr>`;
       });
 
-      // Gán một lần duy nhất vào DOM (Tốc độ tức thì 0ms)
       tbody.innerHTML = rowsHtml;
 
-      // 4. CHỈ CUỘN TRANG Ở LẦN TẢI ĐẦU TIÊN (Tránh giật màn hình khi bấm nút)
+      // Tự động cuộn đến chuyến bay giờ hiện tại
       if (shouldScroll && isInitialLoad && datePicker.value === todayStr) {
         isInitialLoad = false;
         setTimeout(() => {
@@ -368,7 +367,7 @@
 
     document.getElementById('searchInput').addEventListener('input', () => renderFlights(false));
 
-    // Bound: ALL | DEP | ARR (Phản hồi tức thì)
+    // Bound: ALL | DEP | ARR
     window.setDirection = (dir) => {
       if (currentDirection === dir) return;
       currentDirection = dir;
@@ -379,7 +378,7 @@
       renderFlights(false);
     };
 
-    // Type: ALL | DOM | INTL (Phản hồi tức thì)
+    // Type: ALL | DOM | INTL
     window.setType = (type) => {
       if (currentType === type) return;
       currentType = type;
