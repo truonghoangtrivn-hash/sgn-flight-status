@@ -19,20 +19,17 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm đổi select và chờ hệ thống ASP.NET cập nhật
-def change_select(page, selector, target_val):
-    current = page.locator(selector).input_value()
-    if current != target_val:
-        print(f"-> Đổi {selector} sang '{target_val}'...")
-        try:
-            with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
-                page.select_option(selector, value=target_val)
-            time.sleep(3)
-        except Exception:
-            page.select_option(selector, value=target_val)
-            time.sleep(4)
+# Hàm đổi ô chọn an toàn và đợi máy chủ phản hồi
+def select_and_wait(page, selector, value):
+    try:
+        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
+            page.select_option(selector, value=value)
+        time.sleep(3)
+    except Exception:
+        page.select_option(selector, value=value)
+        time.sleep(4)
 
-# 2. Quy trình cào dữ liệu SGN
+# 2. Quy trình cào từng mục trên trang mới tinh
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
@@ -44,77 +41,80 @@ def scrape_viags():
 
     all_flights = []
 
+    SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
+    SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
+    SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
+
+    # 4 Mục cần cào
+    sections = [
+        {"name": "QUỐC NỘI - BAY ĐI", "station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
+        {"name": "QUỐC NỘI - BAY ĐẾN", "station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
+        {"name": "QUỐC TẾ - BAY ĐI", "station": "INT", "trip": "D", "f_type": "International", "d_type": "Departure"},
+        {"name": "QUỐC TẾ - BAY ĐẾN", "station": "INT", "trip": "A", "f_type": "International", "d_type": "Arrival"}
+    ]
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={"width": 1440, "height": 900}
         )
-        page = context.new_page()
 
-        url = "https://www.viags.vn/en-US/flight-schedules"
-        print(f"1. Mở trang: {url}")
-        page.goto(url, wait_until="networkidle", timeout=60000)
-        time.sleep(3)
-
-        SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
-        SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
-        SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
-
-        # BƯỚC 1: Chọn sân bay Sài Gòn (SGN)
-        print("2. Đang chọn Sân bay: Ho Chi Minh (SGN)...")
-        change_select(page, SEL_ORIGIN, "SGN")
-
-        # 4 Mục cần cào
-        tasks = [
-            {"station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
-            {"station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
-            {"station": "INT", "trip": "D", "f_type": "International", "d_type": "Departure"},
-            {"station": "INT", "trip": "A", "f_type": "International", "d_type": "Arrival"}
-        ]
-
-        for task in tasks:
-            f_type = task["f_type"]
-            d_type = task["d_type"]
+        for sec in sections:
             print(f"\n=======================================================")
-            print(f" ĐANG XỬ LÝ: [ {f_type.upper()} ] - [ {d_type.upper()} ] TẠI SGN")
+            print(f" >>> BẮT ĐẦU MỞ TRANG MỚI ĐỂ CÀO: [ {sec['name']} ] <<<")
             print(f"=======================================================")
 
-            # Luôn đảm bảo sân bay là SGN
-            change_select(page, SEL_ORIGIN, "SGN")
-            change_select(page, SEL_STATION, task["station"])
-            change_select(page, SEL_TRIP, task["trip"])
-            time.sleep(3)
+            # MỞ MỘT TRANG MỚI TINH CHO MỖI MỤC
+            page = context.new_page()
+            url = "https://www.viags.vn/en-US/flight-schedules"
+            page.goto(url, wait_until="networkidle", timeout=60000)
+            time.sleep(2)
 
-            # BẤM NÚT VÀNG 'LOAD MORE' - ĐỊNH VỊ CHÍNH XÁC .p-top1__btn1 .c-btn1
+            # 1. Luôn chọn Sân bay Sài Gòn (SGN)
+            print("1. Chọn Sân bay: Ho Chi Minh (SGN)...")
+            select_and_wait(page, SEL_ORIGIN, "SGN")
+
+            # 2. Chọn Loại chuyến (DOM / INT) nếu cần
+            if sec["station"] != "DOM":
+                print(f"2. Chọn Loại chuyến: {sec['station']}...")
+                select_and_wait(page, SEL_STATION, sec["station"])
+
+            # 3. Chọn Chiều bay (D / A) nếu cần
+            if sec["trip"] != "D":
+                print(f"3. Chọn Chiều bay: {sec['trip']}...")
+                select_and_wait(page, SEL_TRIP, sec["trip"])
+
+            # 4. BẤM NÚT VÀNG 'LOAD MORE' LIÊN TỤC CHO ĐẾN HẾT SẠCH
             load_count = 0
-            for i in range(25):
-                clicked = page.evaluate("""() => {
-                    // Định vị chính xác nút vàng Load more trong khung bảng
-                    const btn = document.querySelector('.p-top1__btn1 .c-btn1, .p-top1__btn1 span');
-                    if (btn && !btn.classList.contains('hidden')) {
-                        btn.scrollIntoView();
-                        btn.click();
-                        return true;
-                    }
-                    return false;
-                }""")
+            while True:
+                # Cuộn chuột xuống đáy trang để kích hoạt nút
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1)
 
-                if clicked:
+                btn = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
+                if btn.count() > 0 and btn.first.is_visible():
                     load_count += 1
                     print(f"   -> Bấm 'Load more' lần {load_count}...")
-                    time.sleep(1.8)
+                    try:
+                        btn.first.scroll_into_view_if_needed()
+                        btn.first.click(timeout=3000)
+                        time.sleep(2.5) # Chờ nạp thêm chuyến bay
+                    except Exception:
+                        break
+
+                    if load_count >= 25:
+                        break
                 else:
-                    print(f"   -> Đã tải xong toàn bộ danh sách (đã bấm {load_count} lần 'Load more').")
+                    print(f"   -> Đã tải xong toàn bộ (đã bấm {load_count} lần 'Load more').")
                     break
 
             # Đọc tiêu đề các cột của bảng
             headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
             rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
-            print(f"Tiêu đề bảng: {headers}")
-            print(f"Tổng số dòng cào được: {len(rows)}")
+            print(f"Tổng số dòng cào được trong bảng: {len(rows)}")
 
-            section_vna_count = 0
+            section_vna = 0
             for row in rows:
                 tds = row.locator("td").all()
                 if not tds or len(tds) < 5:
@@ -143,12 +143,12 @@ def scrape_viags():
                         flight_no = match_vn.group(1).replace(" ", "")
 
                 if is_vna and flight_no:
-                    route = col_map.get("destination", "") if d_type == "Departure" else col_map.get("from", "")
-                    gate = col_map.get("gate", "--") if d_type == "Departure" else "--"
+                    route = col_map.get("destination", "") if sec["d_type"] == "Departure" else col_map.get("from", "")
+                    gate = col_map.get("gate", "--") if sec["d_type"] == "Departure" else "--"
                     if not gate or gate == "":
                         gate = "--"
 
-                    belt = col_map.get("baggage belts", col_map.get("belt", "--")) if d_type == "Arrival" else "--"
+                    belt = col_map.get("baggage belts", col_map.get("belt", "--")) if sec["d_type"] == "Arrival" else "--"
                     if not belt or belt == "":
                         belt = "--"
 
@@ -167,16 +167,18 @@ def scrape_viags():
                         "gate": gate,
                         "belt": belt,
                         "remarks": remarks,
-                        "flight_type": f_type,       # Domestic / International
-                        "direction": d_type,           # Departure / Arrival
+                        "flight_type": sec["f_type"],   # Domestic / International
+                        "direction": sec["d_type"],       # Departure / Arrival
                         "airport": "SGN",
                         "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
                         "updated_at": firestore.SERVER_TIMESTAMP
                     }
                     all_flights.append(flight_item)
-                    section_vna_count += 1
+                    section_vna += 1
 
-            print(f"-> Thu thập được {section_vna_count} chuyến bay Vietnam Airlines mục này.")
+            print(f"✓ ĐÃ LẤY: {section_vna} chuyến bay Vietnam Airlines trong mục này.")
+            # Đóng trang này để dọn sạch bộ nhớ
+            page.close()
 
         browser.close()
 
@@ -193,6 +195,7 @@ def scrape_viags():
         batch = db.batch()
         count = 0
         for flight in all_flights:
+            # Document ID độc nhất: Ngày_ChiềuBay_LoạiChuyến_SốHiệu
             doc_id = f"{flight['date']}_{flight['direction']}_{flight['flight_type']}_{flight['flight_no']}"
             doc_ref = db.collection("flights").document(doc_id)
             batch.set(doc_ref, flight)
@@ -204,7 +207,7 @@ def scrape_viags():
 
         if count > 0:
             batch.commit()
-        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY VÀO FIREBASE! ===")
+        print("=== ĐÃ LƯU THÀNH CÔNG TOÀN BỘ CHUYẾN BAY THẬT VÀO FIREBASE! ===")
     else:
         print("Cảnh báo: Không có dữ liệu để lưu.")
 
