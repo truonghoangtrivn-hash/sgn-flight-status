@@ -20,16 +20,6 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Hàm đổi ô chọn và chờ phản hồi mạng
-def select_and_wait(page, selector, value):
-    try:
-        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
-            page.select_option(selector, value=value)
-        time.sleep(3)
-    except Exception:
-        page.select_option(selector, value=value)
-        time.sleep(4)
-
 # Hàm lấy giờ ETA thực tế từ Flightradar24
 def fetch_fr24_eta(flight_no):
     clean_no = flight_no.replace(" ", "").upper()
@@ -48,7 +38,6 @@ def fetch_fr24_eta(flight_no):
                 tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
 
                 for item in items:
-                    # Kiểm tra chuyến bay đến SGN
                     dest_code = item.get("airport", {}).get("destination", {}).get("code", {}).get("iata")
                     if dest_code == "SGN" or not dest_code:
                         time_info = item.get("time", {})
@@ -65,19 +54,28 @@ def fetch_fr24_eta(flight_no):
                             dt = datetime.fromtimestamp(real_ts, tz_vn)
                             return dt.strftime('%H:%M')
 
-                        # 3. Lấy từ text trạng thái của FR24 (VD: Estimated 12:31 AM)
+                        # 3. Lấy từ text trạng thái của FR24
                         status_text = item.get("status", {}).get("text", "")
                         if "ESTIMATED" in status_text.upper():
-                            # Trích xuất giờ
                             time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM)?)', status_text, re.I)
                             if time_match:
                                 return time_match.group(1)
                             return status_text
-    except Exception as e:
+    except Exception:
         pass
     return "--"
 
-# 2. Quy trình cào dữ liệu SGN
+# Hàm đổi ô chọn và chờ phản hồi mạng
+def select_and_wait(page, selector, value):
+    try:
+        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
+            page.select_option(selector, value=value)
+        time.sleep(3)
+    except Exception:
+        page.select_option(selector, value=value)
+        time.sleep(4)
+
+# 2. Quy trình cào dữ liệu
 def scrape_viags():
     db = init_firebase()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
@@ -87,6 +85,60 @@ def scrape_viags():
     tomorrow_str = (now_vn + timedelta(days=1)).strftime('%Y-%m-%d')
 
     scrape_mode = os.environ.get("SCRAPE_MODE", "both_days")
+
+    # =======================================================
+    # CHẾ ĐỘ SIÊU TỐC: CHỈ QUÉT FLIGHTRADAR24 (CHẠY TRONG 20S)
+    # =======================================================
+    if scrape_mode == "fr24_only":
+        print(f"=======================================================")
+        print(f" >>> [CHẾ ĐỘ SIÊU TỐC]: CẬP NHẬT RIÊNG FLIGHTRADAR24 ETA <<<")
+        print(f"=======================================================")
+        window_limit = now_vn + timedelta(hours=16)
+        check_start = now_vn - timedelta(hours=1)
+
+        # Lấy dữ liệu các chuyến bay đến đang có trong Firebase
+        docs_today = list(db.collection("flights").where("date", "==", today_str).stream())
+        docs_tomorrow = list(db.collection("flights").where("date", "==", tomorrow_str).stream())
+        all_docs = docs_today + docs_tomorrow
+
+        updated_count = 0
+        batch = db.batch()
+        batch_count = 0
+
+        for doc in all_docs:
+            f = doc.to_dict()
+            if f.get("direction") == "Arrival":
+                try:
+                    flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
+                    if check_start <= flight_dt <= window_limit:
+                        eta = fetch_fr24_eta(f["flight_no"])
+                        if eta and eta != "--":
+                            batch.update(doc.reference, {
+                                "fr24_eta": eta,
+                                "updated_at": firestore.SERVER_TIMESTAMP
+                            })
+                            batch_count += 1
+                            updated_count += 1
+                            print(f"   -> [FR24 ETA] {f['flight_no']} ({f.get('route', '')}): {eta}")
+
+                            if batch_count >= 400:
+                                batch.commit()
+                                batch = db.batch()
+                                batch_count = 0
+                        time.sleep(0.3)
+                except Exception:
+                    pass
+
+        if batch_count > 0:
+            batch.commit()
+
+        print(f"✓ Hoàn tất cập nhật ETA Flightradar24 cho {updated_count} chuyến bay!")
+        print("=== KẾT THÚC CẬP NHẬT SIÊU TỐC FR24 ===")
+        return
+
+    # =======================================================
+    # CHẾ ĐỘ TIÊU CHUẨN: CÀO VIAGS + QUÉT FLIGHTRADAR24
+    # =======================================================
     if scrape_mode == "today_only":
         target_dates = [today_str]
         print(f">>> [CHẾ ĐỘ TỐC ĐỘ]: CHỈ CẬP NHẬT NGÀY HÔM NAY ({today_str}) <<<")
@@ -149,7 +201,6 @@ def scrape_viags():
                     print(f"3. Chọn Chiều bay: {sec['trip']}...")
                     select_and_wait(page, SEL_TRIP, sec["trip"])
 
-                # Bấm Load more
                 load_count = 0
                 while True:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -232,7 +283,7 @@ def scrape_viags():
                             "direction": sec["d_type"],
                             "airport": "SGN",
                             "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
-                            "fr24_eta": "--", # Mặc định
+                            "fr24_eta": "--",
                             "updated_at": firestore.SERVER_TIMESTAMP
                         }
                         all_flights.append(flight_item)
@@ -243,7 +294,7 @@ def scrape_viags():
 
         browser.close()
 
-    # 3. QUÉT ETA TỪ FLIGHTRADAR24 TRONG VÒNG 16 TIẾNG TỚI
+    # QUÉT FR24 ETA
     print(f"\n=======================================================")
     print(f" BẮT ĐẦU QUÉT ETA TỪ FLIGHTRADAR24 CHO CÁC CHUYẾN ĐẾN (16H TỚI)")
     print(f"=======================================================")
@@ -252,25 +303,22 @@ def scrape_viags():
     window_limit = now_vn + timedelta(hours=16)
 
     for f in all_flights:
-        # Chỉ quét các chuyến bay đến (Arrival)
         if f["direction"] == "Arrival":
             try:
-                # Tính giờ hạ cánh kế hoạch
                 flight_dt = tz_vn.localize(datetime.strptime(f"{f['date']} {f['scheduled']}", "%Y-%m-%d %H:%M"))
-                # Kiểm tra nếu chuyến bay nằm trong khoảng: từ 1 tiếng trước đến 16 tiếng tới
                 if (now_vn - timedelta(hours=1)) <= flight_dt <= window_limit:
                     eta = fetch_fr24_eta(f["flight_no"])
                     if eta and eta != "--":
                         f["fr24_eta"] = eta
                         fr24_count += 1
                         print(f"   -> [FR24 ETA] {f['flight_no']} ({f['route']}): {eta}")
-                    time.sleep(0.4) # Nghỉ nhẹ tránh bị chặn
+                    time.sleep(0.3)
             except Exception:
                 pass
 
     print(f"✓ Đã lấy được giờ ETA thực tế từ Flightradar24 cho {fr24_count} chuyến bay đến.")
 
-    # 4. LƯU VÀO FIREBASE
+    # LƯU VÀO FIREBASE
     print(f"\n=======================================================")
     print(f" TỔNG CỘNG THU THẬP: {len(all_flights)} CHUYẾN BAY THẬT SGN")
     print(f"=======================================================")
