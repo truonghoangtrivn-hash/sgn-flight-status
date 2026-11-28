@@ -42,9 +42,9 @@ def is_valid_arrival_eta(eta_str, sta_str):
     except Exception:
         return True
 
-# TẦNG 1: Quét bầu trời lấy danh sách tất cả máy bay ĐANG BAY về SGN ngay lúc này
+# TẦNG 1A: Quét radar bầu trời (Bao gồm cả máy bay đang bay qua biển/vệ tinh: estimated=1 & satellite=1)
 def get_airborne_flights_to_sgn():
-    airborne_map = {}  # { "VN247": "fr24_flight_id", ... }
+    airborne_map = {}  # { "VN409": "fr24_flight_id", ... }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json",
@@ -52,9 +52,11 @@ def get_airborne_flights_to_sgn():
         "Referer": "https://www.flightradar24.com/"
     }
 
+    # Bật đầy đủ cờ vệ tinh (satellite=1), ước tính qua biển (estimated=1), adsb, mlat để không sót chuyến nào
+    base_params = "faa=1&satellite=1&mlat=1&flarm=1&adsb=1&gnd=0&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1&stats=0&limit=5000"
     feed_urls = [
-        "https://data-cloud.flightradar24.com/zones/fcgi/feed.js?to=SGN",
-        "https://data-cloud.flightradar24.com/zones/fcgi/feed.js?airline=HVN"
+        f"https://data-cloud.flightradar24.com/zones/fcgi/feed.js?{base_params}&to=SGN",
+        f"https://data-cloud.flightradar24.com/zones/fcgi/feed.js?{base_params}&airline=HVN"
     ]
 
     for url in feed_urls:
@@ -70,7 +72,7 @@ def get_airborne_flights_to_sgn():
                         on_ground = info[14]
                         altitude = info[4] if isinstance(info[4], (int, float)) else 0
 
-                        # Bắt buộc điểm đến là SGN và máy bay ĐANG BAY TRÊN TRỜI (on_ground == 0)
+                        # Bắt buộc điểm đến là SGN và máy bay ĐANG BAY TRÊN TRỜI
                         if dest != "SGN" or (on_ground == 1 and altitude <= 0):
                             continue
 
@@ -86,11 +88,43 @@ def get_airborne_flights_to_sgn():
                         if vn_no:
                             airborne_map[vn_no] = f_id
         except Exception as e:
-            print(f"Lưu ý khi quét tầng 1 ({url}): {e}")
+            print(f"Lưu ý khi quét tầng 1A ({url}): {e}")
 
     return airborne_map
 
-# TẦNG 2: Lấy chính xác GIỜ DỰ ĐÁP (ETA) cho máy bay đang bay qua flight_id
+# TẦNG 1B: Kiểm tra trực tiếp qua cổng Ô Tìm Kiếm LIVE FLIGHTS của Flightradar24 (Bắt 100% các chuyến như VN409, VN307, VN423)
+def find_live_flight_id_via_search(flight_no):
+    clean_no = flight_no.replace(" ", "").upper()
+    callsign_no = clean_no.replace("VN", "HVN", 1) if clean_no.startswith("VN") else clean_no
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.flightradar24.com",
+        "Referer": "https://www.flightradar24.com/"
+    }
+
+    try:
+        url = f"https://www.flightradar24.com/v1/search/web/find?query={clean_no}&limit=15"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("results", []):
+                    # Chỉ lấy mục nằm trong khung LIVE FLIGHTS (type == 'live')
+                    if item.get("type") == "live":
+                        detail = item.get("detail", {})
+                        schd_to = (detail.get("schd_to") or "").upper().strip()
+                        f_code = (detail.get("flight") or "").upper().replace(" ", "").strip()
+                        cs_code = (detail.get("callsign") or "").upper().replace(" ", "").strip()
+                        label = (item.get("label") or "").upper().replace(" ", "").strip()
+
+                        if schd_to == "SGN" and (f_code == clean_no or cs_code == callsign_no or clean_no in label):
+                            return item.get("id")
+    except Exception:
+        pass
+    return None
+
+# TẦNG 2: Lấy chính xác GIỜ DỰ ĐÁP (ETA) và ngày đáp cho máy bay đang LIVE qua flight_id
 def fetch_airborne_eta_by_id(flight_id, flight_no):
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     headers = {
@@ -113,33 +147,40 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
                 time_info = data.get("time", {})
                 real_arr = time_info.get("real", {}).get("arrival")
                 est_arr = time_info.get("estimated", {}).get("arrival")
+                sched_arr = time_info.get("scheduled", {}).get("arrival")
 
                 # Tuyệt đối không lấy nếu đã hạ cánh
                 if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
-                    return "--"
+                    return "--", None
+
+                arr_dt = None
+                if sched_arr:
+                    arr_dt = datetime.fromtimestamp(sched_arr, tz_vn)
+                elif est_arr:
+                    arr_dt = datetime.fromtimestamp(est_arr, tz_vn)
 
                 # Ưu tiên 1: Lấy từ trường timestamp dự đáp chính thức (time.estimated.arrival)
                 if est_arr:
                     dt = datetime.fromtimestamp(est_arr, tz_vn)
-                    return dt.strftime("%H:%M")
+                    return dt.strftime("%H:%M"), arr_dt
 
-                # Ưu tiên 2: Lấy từ chữ "Estimated arrival HH:MM"
+                # Ưu tiên 2: Lấy từ dòng chữ "Estimated arrival 2:20 PM"
                 if "ESTIMATED ARRIVAL" in status_upper:
                     match_arr = re.search(r"estimated\s+arrival\s*[:\s•]*(\d{1,2}:\d{2}\s*(?:AM|PM)?)", raw_status_text, re.I)
                     if match_arr:
                         t_str = match_arr.group(1).strip()
                         try:
                             t_obj = datetime.strptime(t_str, "%I:%M %p")
-                            return t_obj.strftime("%H:%M")
+                            return t_obj.strftime("%H:%M"), arr_dt
                         except Exception:
-                            return t_str
+                            return t_str, arr_dt
     except Exception as e:
         print(f"Lưu ý clickhandler {flight_no}: {e}")
 
-    return "--"
+    return "--", None
 
-# QUY TẮC 1: Chỉ cập nhật cho các chuyến có Max(STA, ETA) SAU giờ hiện tại
-def is_flight_after_now(f, now_vn):
+# Kiểm tra chuyến bay đủ điều kiện quét: Chưa đáp (cho phép trễ qua giờ STA tối đa 4 tiếng như chuyến VN423) và không quá 20 tiếng tới
+def is_flight_candidate_for_live_check(f, now_vn):
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     f_date = f.get("date", "")
     sta_str = f.get("scheduled", "")
@@ -157,10 +198,12 @@ def is_flight_after_now(f, now_vn):
                 pass
 
     if not candidates:
-        return False
+        return False, None
 
     latest_milestone = max(candidates)
-    return latest_milestone > now_vn
+    # Cho phép quét cả những chuyến đang bị delay qua giờ STA tới 4 tiếng (như VN423 STA 12:35 nhưng 13:32 mới đáp)
+    is_eligible = (now_vn - timedelta(hours=4)) <= latest_milestone <= (now_vn + timedelta(hours=24))
+    return is_eligible, latest_milestone
 
 # Đọc danh sách chuyến bay VIAGS từ ngăn chứa 1 (daily_schedules)
 def load_day_flights(d):
@@ -201,28 +244,19 @@ def scrape_viags():
     scrape_mode = os.environ.get("SCRAPE_MODE", "both_days")
 
     # =========================================================================
-    # CHỨC NĂNG ĐỘC LẬP: QUÉT RADAR 2 TẦNG & CẬP NHẬT CỘNG DỒN VÀO fr24_etas
+    # CHỨC NĂNG ĐỘC LẬP: QUÉT TOÀN BỘ MÁY BAY ĐANG LIVE & CẬP NHẬT fr24_etas
     # =========================================================================
     if scrape_mode == "fr24_only":
         print(f"=======================================================")
-        print(f" >>> QUÉT RADAR 2 TẦNG FLIGHTRADAR24 (CHỈ MÁY BAY ĐANG BAY) <<<")
+        print(f" >>> QUÉT TOÀN DIỆN MỌI CHUYẾN BAY ĐANG LIVE TRÊN FR24 <<<")
         print(f" Thời điểm quét (VN): {now_vn.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"=======================================================")
 
-        # Tầng 1: Lấy tất cả máy bay Vietnam Airlines đang bay trên trời về SGN
+        # Bước 1: Quét bản đồ bầu trời (bao gồm cả vệ tinh & biển khơi)
         airborne_map = get_airborne_flights_to_sgn()
-        print(f"✓ [TẦNG 1 - RADAR BẦU TRỜI]: Phát hiện {len(airborne_map)} máy bay Vietnam Airlines ĐANG BAY về SGN: {list(airborne_map.keys())}")
+        print(f"✓ [BƯỚC 1 - BẦU TRỜI]: Phát hiện {len(airborne_map)} chuyến trên feed: {list(airborne_map.keys())}")
 
-        # Tầng 2: Lấy giờ dự đáp (ETA) cho từng máy bay đang bay
-        live_eta_results = {}
-        for f_no, f_id in airborne_map.items():
-            eta = fetch_airborne_eta_by_id(f_id, f_no)
-            if eta and eta != "--":
-                live_eta_results[f_no] = eta
-                print(f"   ✈️ [ĐANG BAY TRÊN RADAR] Chuyến {f_no} -> Giờ dự đáp (ETA): {eta}")
-            time.sleep(0.25)
-
-        print(f"\n--- ĐỐI CHIẾU & CẬP NHẬT CỘNG DỒN VÀO NGĂN fr24_etas ---")
+        # Bước 2: Đối chiếu với danh sách chuyến bay chưa đáp trong bảng và kiểm tra bổ sung qua cổng Search LIVE FLIGHTS
         for d in target_dates:
             flights_list = load_day_flights(d)
             if not flights_list:
@@ -238,22 +272,41 @@ def scrape_viags():
                     sta_str = f.get("scheduled", "--:--")
                     rem_upper = (f.get("remarks") or "").upper()
 
-                    # Quy tắc 1, 3, 4: Chưa đáp, Max(STA, ETA) > giờ hiện tại, đang bay trên radar và có ETA hợp lệ
-                    if "LANDED" not in rem_upper and is_flight_after_now(f, now_vn):
-                        if f_no in live_eta_results:
-                            eta_val = live_eta_results[f_no]
-                            if is_valid_arrival_eta(eta_val, sta_str):
-                                updates_for_day[f_no] = eta_val
-                                print(f"   ✓ [GHI ĐÈ/THÊM MỚI NGÀY {d}] {f_no} ({f.get('route', '')} | STA {sta_str}) => FR24 ETA: {eta_val}")
+                    # Bỏ qua nếu chuyến bay đã có trạng thái Landed (Đã hạ cánh)
+                    if "LANDED" in rem_upper or "ARRIVED" in rem_upper:
+                        continue
+
+                    is_eligible, f_milestone_dt = is_flight_candidate_for_live_check(f, now_vn)
+                    if not is_eligible:
+                        continue
+
+                    # Tìm flight_id đang LIVE (từ bản đồ bầu trời hoặc từ ô tìm kiếm LIVE FLIGHTS)
+                    live_f_id = airborne_map.get(f_no)
+                    if not live_f_id:
+                        live_f_id = find_live_flight_id_via_search(f_no)
+                        time.sleep(0.15)
+
+                    if live_f_id:
+                        eta_val, live_arr_dt = fetch_airborne_eta_by_id(live_f_id, f_no)
+                        time.sleep(0.2)
+
+                        if eta_val and eta_val != "--" and is_valid_arrival_eta(eta_val, sta_str):
+                            # Đảm bảo chuyến đang LIVE thuộc đúng ngày d (không gán nhầm chuyến đang bay hôm nay vào lịch của chiều mai)
+                            if live_arr_dt and f_milestone_dt:
+                                if abs((live_arr_dt - f_milestone_dt).total_seconds()) > 10 * 3600:
+                                    continue
+
+                            updates_for_day[f_no] = eta_val
+                            print(f"   ✈️ [LIVE TRÊN FR24 - NGÀY {d}] {f_no} ({f.get('route', '')} | STA {sta_str}) => ETA DỰ ĐÁP: {eta_val}")
 
             # DÙNG LỆNH .update() ĐỂ GIỮ NGUYÊN VĨNH VIỄN CÁC CHUYẾN ĐÃ CÓ DỮ LIỆU TỪ TRƯỚC, KHÔNG BAO GIỜ XÓA VỀ RADAR LIVE!
             if updates_for_day:
                 fr24_ref.update(updates_for_day)
-                print(f"✓ Ngày {d}: Đã cập nhật bổ sung {len(updates_for_day)} chuyến đang bay (Giữ nguyên 100% các ETA đã có trước đó)!")
+                print(f"✓ Ngày {d}: Đã cập nhật cộng dồn {len(updates_for_day)} chuyến đang LIVE vào ngăn fr24_etas/{d}!")
             else:
-                print(f"✓ Ngày {d}: Không có thêm chuyến mới, giữ nguyên 100% các ETA đã hiển thị trước đó!")
+                print(f"✓ Ngày {d}: Giữ nguyên 100% các ETA đã hiển thị trước đó!")
 
-        print("=== HOÀN TẤT QUÉT RADAR 2 TẦNG FLIGHTRADAR24 ===")
+        print("=== HOÀN TẤT QUÉT TOÀN DIỆN FLIGHTRADAR24 ===")
         return
 
     # =========================================================================
