@@ -23,16 +23,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python (Có bộ nhớ đệm tốc độ cao)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
-      - name: Install dependencies (Bỏ qua tải trình duyệt Chromium khi chỉ quét FR24)
+      - name: Install dependencies (Siêu tốc khi quét FR24)
         run: |
-          pip install playwright firebase-admin pytz
-          if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
+          if [ "${{ github.event.inputs.mode }}" = "fr24_only" ]; then
+            pip install firebase-admin pytz
+          else
+            pip install playwright firebase-admin pytz
             playwright install chromium
           fi
 
