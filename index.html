@@ -63,72 +63,80 @@
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans antialiased selection:bg-vna-gold selection:text-vna-dark">
 
-  <!-- KHUNG ĐẦU TRANG GHIM CỐ ĐỊNH (SIÊU GỌN - CHỈ CHIẾM ~1/6 MÀN HÌNH ĐIỆN THOẠI) -->
+  <!-- KHUNG ĐẦU TRANG GHIM CỐ ĐỊNH (TĂNG 30% ĐỘ DÀY ĐỂ CHẠM CẢM ỨNG DỄ DÀNG) -->
   <div class="sticky top-0 z-50 shadow-md">
     
-    <!-- 1. Header chính tối ưu chiều cao -->
-    <header class="bg-vna-dark text-white border-b-2 border-vna-gold px-2.5 py-1.5 sm:px-6 sm:py-2.5">
+    <!-- 1. Header chính -->
+    <header class="bg-vna-dark text-white border-b-2 border-vna-gold px-3 py-2 sm:px-6 sm:py-2.5">
       <div class="max-w-7xl mx-auto flex items-center justify-between">
         <div class="flex items-center space-x-2 sm:space-x-3">
-          <div class="w-7 h-7 sm:w-9 sm:h-9 rounded-lg bg-vna-navy border border-vna-gold/40 flex items-center justify-center shadow-inner">
-            <i class="fa-solid fa-plane-departure text-vna-gold text-xs sm:text-base"></i>
+          <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-vna-navy border border-vna-gold/40 flex items-center justify-center shadow-inner">
+            <i class="fa-solid fa-plane-departure text-vna-gold text-sm sm:text-base"></i>
           </div>
           <div>
             <div class="flex items-center space-x-1.5">
-              <h1 class="text-sm sm:text-xl font-bold tracking-tight text-white font-mono leading-none">SGN MONITOR</h1>
-              <span class="px-1.5 py-0.2 rounded text-[9px] sm:text-[10px] font-bold bg-vna-gold text-vna-dark font-mono">VNA</span>
+              <h1 class="text-base sm:text-xl font-bold tracking-tight text-white font-mono leading-none">SGN MONITOR</h1>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-vna-gold text-vna-dark font-mono">VNA</span>
             </div>
-            <p class="text-[9px] sm:text-xs text-sky-200 font-medium leading-tight">Tan Son Nhat (SGN/VVTS)</p>
+            <p class="text-[10px] sm:text-xs text-sky-200 font-medium leading-tight mt-0.5">Tan Son Nhat (SGN/VVTS)</p>
           </div>
         </div>
         
-        <!-- Cụm nút SYNC NOW & AUTO: ON siêu gọn trên điện thoại -->
-        <div class="flex items-center space-x-1.5 sm:space-x-2">
-          <button id="btnSyncNow" onclick="triggerSyncNow()" class="inline-flex items-center px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-xs cursor-pointer font-mono">
-            <i id="syncIcon" class="fa-solid fa-arrows-rotate mr-1 text-[9px] sm:text-xs"></i>
+        <!-- Cụm nút SYNC NOW & AUTO: ON tăng nhẹ để dễ chạm ngón tay -->
+        <div class="flex items-center space-x-2">
+          <button id="btnSyncNow" onclick="triggerSyncNow()" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-xs cursor-pointer font-mono">
+            <i id="syncIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
             <span id="syncText">SYNC</span>
           </button>
 
-          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Toggle Auto-Pilot" class="inline-flex items-center px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
-            <span id="autoPilotDot" class="w-1.5 h-1.5 sm:w-2 sm:h-2 mr-1 sm:mr-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Toggle Auto-Pilot" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
+            <span id="autoPilotDot" class="w-2 h-2 mr-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
             <span id="autoPilotText">AUTO</span>
           </button>
         </div>
       </div>
     </header>
 
-    <!-- 2. Thanh điều khiển Bộ lọc (Sắp xếp 2x2 cực gọn trên điện thoại) -->
-    <div class="bg-white/95 backdrop-blur border-b border-slate-200 px-2.5 py-1.5 sm:px-6 sm:py-2">
+    <!-- 2. Thanh điều khiển Bộ lọc (TĂNG 30% CHIỀU CAO ĐỂ CHẠM BẰNG NGÓN TAY CỰC DỄ) -->
+    <div class="bg-white/95 backdrop-blur border-b border-slate-200 px-3 py-2 sm:px-6 sm:py-2.5">
       <div class="max-w-7xl mx-auto">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-3 items-center">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 items-center">
           
-          <!-- Ô 1: DATE -->
-          <div class="flex items-center space-x-1">
-            <span class="text-[10px] sm:text-xs font-bold text-slate-500 font-mono">DATE:</span>
-            <input type="date" id="datePicker" class="w-full px-1.5 py-0.5 sm:py-1 bg-slate-50 border border-slate-300 rounded text-xs font-mono text-slate-800 focus:outline-none focus:border-vna-blue">
+          <!-- Ô 1: DATE (Cao h-8.5 ~34px chạm ngón tay rất sướng) -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-regular fa-calendar-days text-vna-blue mr-0.5"></i> DATE:
+            </label>
+            <input type="date" id="datePicker" class="w-full h-8 sm:h-9 px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:border-vna-blue shadow-2xs">
           </div>
 
           <!-- Ô 2: SEARCH -->
-          <div class="flex items-center space-x-1">
-            <span class="text-[10px] sm:text-xs font-bold text-slate-500 font-mono">FIND:</span>
-            <input type="text" id="searchInput" placeholder="VN205, DAD..." class="w-full px-1.5 py-0.5 sm:py-1 bg-slate-50 border border-slate-300 rounded text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-vna-blue">
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-magnifying-glass text-vna-blue mr-0.5"></i> FIND:
+            </label>
+            <input type="text" id="searchInput" placeholder="VN205, DAD..." class="w-full h-8 sm:h-9 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-vna-blue shadow-2xs">
           </div>
 
-          <!-- Ô 3: TYPE: DOM | INTL -->
-          <div class="flex items-center space-x-1">
-            <span class="text-[10px] sm:text-xs font-bold text-slate-500 font-mono">TYPE:</span>
-            <div class="grid grid-cols-2 gap-0.5 w-full bg-slate-100 p-0.5 rounded border border-slate-200">
-              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition bg-vna-blue text-white shadow-xs font-mono">DOM</button>
-              <button onclick="setType('International')" id="btn-type-International" class="type-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition text-slate-600 hover:bg-white font-mono">INTL</button>
+          <!-- Ô 3: TYPE: DOM | INTL (Nút cao h-8.5 bấm ngón tay cái chuẩn xác) -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-globe text-vna-blue mr-0.5"></i> TYPE:
+            </label>
+            <div class="grid grid-cols-2 gap-1 w-full h-8 sm:h-9 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs font-mono">DOM</button>
+              <button onclick="setType('International')" id="btn-type-International" class="type-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white font-mono">INTL</button>
             </div>
           </div>
 
-          <!-- Ô 4: BOUND: DEP | ARR -->
-          <div class="flex items-center space-x-1">
-            <span class="text-[10px] sm:text-xs font-bold text-slate-500 font-mono">BOUND:</span>
-            <div class="grid grid-cols-2 gap-0.5 w-full bg-slate-100 p-0.5 rounded border border-slate-200">
-              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition bg-vna-blue text-white shadow-xs font-mono">DEP</button>
-              <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition text-slate-600 hover:bg-white font-mono">ARR</button>
+          <!-- Ô 4: BOUND: DEP | ARR (Nút cao h-8.5 bấm ngón tay cái chuẩn xác) -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-0.5"></i> BOUND:
+            </label>
+            <div class="grid grid-cols-2 gap-1 w-full h-8 sm:h-9 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs font-mono">DEP</button>
+              <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white font-mono">ARR</button>
             </div>
           </div>
 
@@ -142,7 +150,7 @@
   <main class="max-w-7xl mx-auto px-1 sm:px-6 py-1.5 sm:py-3">
 
     <!-- Thống kê nhanh FIDS -->
-    <div class="flex items-center justify-between mb-1 px-1 font-mono text-[10px] sm:text-xs">
+    <div class="flex items-center justify-between mb-1.5 px-1 font-mono text-[10px] sm:text-xs">
       <div class="text-slate-600 font-semibold">
         <span>SHOWING: <strong id="flightCount" class="text-vna-blue font-bold text-xs sm:text-sm">0</strong> FLIGHTS</span>
       </div>
@@ -153,8 +161,8 @@
 
     <!-- BẢNG DANH SÁCH CHUYẾN BAY (TỐI ƯU CHIỀU CAO HÀNG & PHÂN CÁCH ĐẬM NÉT) -->
     <div class="bg-white rounded-lg sm:rounded-2xl shadow-sm border border-slate-300 overflow-hidden">
-      <!-- Tối ưu chiều cao khung cuộn -->
-      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-140px)] sm:max-h-[calc(100vh-190px)] custom-table-scroll">
+      <!-- Tối ưu chiều cao khung cuộn phù hợp với phần Freeze mới -->
+      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-190px)] custom-table-scroll">
         <table class="w-full text-left border-collapse">
           <thead id="flightsTableHead">
             <!-- Header chuẩn VNA Navy & Gold, ghim cố định trên đỉnh bảng -->
@@ -313,19 +321,19 @@
 
     function updateButtonUI() {
       document.querySelectorAll('.type-btn').forEach(b => {
-        b.className = 'type-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono';
+        b.className = 'type-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white cursor-pointer font-mono';
       });
       const activeTypeBtn = document.getElementById(`btn-type-${currentType}`);
       if (activeTypeBtn) {
-        activeTypeBtn.className = 'type-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
+        activeTypeBtn.className = 'type-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
       }
 
       document.querySelectorAll('.dir-btn').forEach(b => {
-        b.className = 'dir-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono';
+        b.className = 'dir-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white cursor-pointer font-mono';
       });
       const activeDirBtn = document.getElementById(`btn-dir-${currentDirection}`);
       if (activeDirBtn) {
-        activeDirBtn.className = 'dir-btn py-0.5 sm:py-1 text-[10px] sm:text-xs font-bold rounded transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
+        activeDirBtn.className = 'dir-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
       }
     }
 
@@ -419,24 +427,24 @@
       const upper = originalText.toUpperCase();
 
       if (upper.includes('BOARDING')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-amber-100 text-amber-950 border border-amber-400 whitespace-nowrap">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-amber-100 text-amber-950 border border-amber-400 whitespace-nowrap">${originalText}</span>`;
       }
       if (upper.includes('DEPARTED') || upper.includes('LANDED') || upper.includes('ARRIVED')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 whitespace-nowrap">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 whitespace-nowrap">${originalText}</span>`;
       }
       if (upper.includes('CHECK-IN')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-300 whitespace-nowrap">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-300 whitespace-nowrap">${originalText}</span>`;
       }
       if (upper.includes('WAITING')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-amber-50/70 text-amber-800 border border-amber-200 whitespace-nowrap">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-amber-50/70 text-amber-800 border border-amber-200 whitespace-nowrap">${originalText}</span>`;
       }
       if (upper.includes('DELAY')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300 whitespace-nowrap">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300 whitespace-nowrap">${originalText}</span>`;
       }
       if (upper.includes('LANDING') || upper.includes('APPROACH')) {
-        return `<span class="inline-block px-1.5 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-sky-100 text-sky-900 border border-sky-400 whitespace-nowrap animate-pulse">${originalText}</span>`;
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-sky-100 text-sky-900 border border-sky-400 whitespace-nowrap animate-pulse">${originalText}</span>`;
       }
-      return `<span class="inline-block px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium text-slate-700 border border-slate-200 whitespace-nowrap">${originalText}</span>`;
+      return `<span class="inline-block px-2 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium text-slate-700 border border-slate-200 whitespace-nowrap">${originalText}</span>`;
     }
 
     function renderFlights(shouldCenter = false) {
@@ -485,7 +493,7 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // CẬP NHẬT HEADER (FREEZE & HIGHLIGHT ĐẬM NÉT)
+      // CẬP NHẬT HEADER
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
@@ -586,7 +594,7 @@
         targetRowIndex = 0;
       }
 
-      // RENDER DỮ LIỆU SIÊU TỐI ƯU CHIỀU CAO & ĐƯỜNG PHÂN CÁCH ĐẬM NÉT
+      // RENDER DỮ LIỆU BẢNG VỚI ĐƯỜNG PHÂN CÁCH ĐẬM
       const tbody = document.getElementById('flightsTableBody');
 
       if (filtered.length === 0) {
@@ -609,7 +617,7 @@
         const rawCityName = f.route || f.destination_or_from || '--';
         const formattedCityHtml = formatAirportWithIATA(rawCityName);
 
-        // ĐƯỜNG KẺ PHÂN CÁCH ĐẬM NÉT: border-b border-slate-300
+        // ĐƯỜNG PHÂN CÁCH ĐẬM NÉT
         let trClass = "hover:bg-slate-50/90 transition-colors border-b border-slate-300";
         if (isBoarding) {
           trClass = "vna-boarding-row font-medium border-b border-slate-300";
@@ -756,7 +764,6 @@
       }
     };
 
-    // Các hàm phục vụ Auto-Pilot
     window.triggerRefreshToday = async (isSilent = true) => {
       if (isTodayUpdating) return;
       isTodayUpdating = true;
@@ -793,12 +800,12 @@
       const txt = document.getElementById('autoPilotText');
 
       if (autoPilotEnabled) {
-        btn.className = "inline-flex items-center px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
-        dot.className = "w-1.5 h-1.5 sm:w-2 sm:h-2 mr-1 sm:mr-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]";
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
+        dot.className = "w-2 h-2 mr-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]";
         txt.innerText = "AUTO";
       } else {
-        btn.className = "inline-flex items-center px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
-        dot.className = "w-1.5 h-1.5 sm:w-2 sm:h-2 mr-1 sm:mr-1.5 bg-slate-400 rounded-full";
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
+        dot.className = "w-2 h-2 mr-1.5 bg-slate-400 rounded-full";
         txt.innerText = "OFF";
       }
     }
