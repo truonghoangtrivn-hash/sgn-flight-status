@@ -100,7 +100,6 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
         "Referer": "https://www.flightradar24.com/"
     }
 
-    # 1. Truy vấn trực tiếp qua clickhandler của máy bay đang bay
     try:
         url = f"https://data-live.flightradar24.com/clickhandler/?version=1.5&flight={flight_id}"
         req = urllib.request.Request(url, headers=headers)
@@ -202,7 +201,7 @@ def scrape_viags():
     scrape_mode = os.environ.get("SCRAPE_MODE", "both_days")
 
     # =========================================================================
-    # CHỨC NĂNG ĐỘC LẬP: QUÉT RADAR 2 TẦNG & CẬP NHẬT NGĂN fr24_etas
+    # CHỨC NĂNG ĐỘC LẬP: QUÉT RADAR 2 TẦNG & CẬP NHẬT CỘNG DỒN VÀO fr24_etas
     # =========================================================================
     if scrape_mode == "fr24_only":
         print(f"=======================================================")
@@ -223,7 +222,7 @@ def scrape_viags():
                 print(f"   ✈️ [ĐANG BAY TRÊN RADAR] Chuyến {f_no} -> Giờ dự đáp (ETA): {eta}")
             time.sleep(0.25)
 
-        print(f"\n--- ĐỐI CHIẾU & LƯU VÀO NGĂN ĐỘC LẬP fr24_etas ---")
+        print(f"\n--- ĐỐI CHIẾU & CẬP NHẬT CỘNG DỒN VÀO NGĂN fr24_etas ---")
         for d in target_dates:
             flights_list = load_day_flights(d)
             if not flights_list:
@@ -231,7 +230,7 @@ def scrape_viags():
                 continue
 
             fr24_ref = db.reference(f"fr24_etas/{d}")
-            new_fr24_map = {}
+            updates_for_day = {}
 
             for f in flights_list:
                 if f.get("direction") == "Arrival":
@@ -244,12 +243,15 @@ def scrape_viags():
                         if f_no in live_eta_results:
                             eta_val = live_eta_results[f_no]
                             if is_valid_arrival_eta(eta_val, sta_str):
-                                new_fr24_map[f_no] = eta_val
-                                print(f"   ✓ [GHI VÀO BẢNG NGÀY {d}] {f_no} ({f.get('route', '')} | STA {sta_str}) => FR24 ETA: {eta_val}")
+                                updates_for_day[f_no] = eta_val
+                                print(f"   ✓ [GHI ĐÈ/THÊM MỚI NGÀY {d}] {f_no} ({f.get('route', '')} | STA {sta_str}) => FR24 ETA: {eta_val}")
 
-            # Cập nhật ngăn fr24_etas/{d} (Xóa sạch mọi giờ giả định, chỉ giữ các chuyến đang bay thật sự)
-            fr24_ref.set(new_fr24_map)
-            print(f"✓ Ngày {d}: Đã lưu {len(new_fr24_map)} chuyến đang bay vào ngăn độc lập fr24_etas/{d}!")
+            # DÙNG LỆNH .update() ĐỂ GIỮ NGUYÊN VĨNH VIỄN CÁC CHUYẾN ĐÃ CÓ DỮ LIỆU TỪ TRƯỚC, KHÔNG BAO GIỜ XÓA VỀ RADAR LIVE!
+            if updates_for_day:
+                fr24_ref.update(updates_for_day)
+                print(f"✓ Ngày {d}: Đã cập nhật bổ sung {len(updates_for_day)} chuyến đang bay (Giữ nguyên 100% các ETA đã có trước đó)!")
+            else:
+                print(f"✓ Ngày {d}: Không có thêm chuyến mới, giữ nguyên 100% các ETA đã hiển thị trước đó!")
 
         print("=== HOÀN TẤT QUÉT RADAR 2 TẦNG FLIGHTRADAR24 ===")
         return
