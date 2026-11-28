@@ -63,7 +63,7 @@
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans antialiased selection:bg-vna-gold selection:text-vna-dark">
 
-  <!-- KHUNG ĐẦU TRANG GHIM CỐ ĐỊNH (TĂNG 30% ĐỘ DÀY ĐỂ CHẠM CẢM ỨNG DỄ DÀNG) -->
+  <!-- KHUNG ĐẦU TRANG GHIM CỐ ĐỊNH -->
   <div class="sticky top-0 z-50 shadow-md">
     
     <!-- 1. Header chính -->
@@ -82,7 +82,7 @@
           </div>
         </div>
         
-        <!-- Cụm nút SYNC NOW & AUTO: ON tăng nhẹ để dễ chạm ngón tay -->
+        <!-- Cụm nút SYNC NOW & AUTO -->
         <div class="flex items-center space-x-2">
           <button id="btnSyncNow" onclick="triggerSyncNow()" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-xs cursor-pointer font-mono">
             <i id="syncIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
@@ -97,12 +97,12 @@
       </div>
     </header>
 
-    <!-- 2. Thanh điều khiển Bộ lọc (TĂNG 30% CHIỀU CAO ĐỂ CHẠM BẰNG NGÓN TAY CỰC DỄ) -->
+    <!-- 2. Thanh điều khiển Bộ lọc -->
     <div class="bg-white/95 backdrop-blur border-b border-slate-200 px-3 py-2 sm:px-6 sm:py-2.5">
       <div class="max-w-7xl mx-auto">
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 items-center">
           
-          <!-- Ô 1: DATE (Cao h-8.5 ~34px chạm ngón tay rất sướng) -->
+          <!-- Ô 1: DATE -->
           <div>
             <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
               <i class="fa-regular fa-calendar-days text-vna-blue mr-0.5"></i> DATE:
@@ -118,7 +118,7 @@
             <input type="text" id="searchInput" placeholder="VN205, DAD..." class="w-full h-8 sm:h-9 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-vna-blue shadow-2xs">
           </div>
 
-          <!-- Ô 3: TYPE: DOM | INTL (Nút cao h-8.5 bấm ngón tay cái chuẩn xác) -->
+          <!-- Ô 3: TYPE: DOM | INTL -->
           <div>
             <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
               <i class="fa-solid fa-globe text-vna-blue mr-0.5"></i> TYPE:
@@ -129,7 +129,7 @@
             </div>
           </div>
 
-          <!-- Ô 4: BOUND: DEP | ARR (Nút cao h-8.5 bấm ngón tay cái chuẩn xác) -->
+          <!-- Ô 4: BOUND: DEP | ARR -->
           <div>
             <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
               <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-0.5"></i> BOUND:
@@ -159,13 +159,12 @@
       </div>
     </div>
 
-    <!-- BẢNG DANH SÁCH CHUYẾN BAY (TỐI ƯU CHIỀU CAO HÀNG & PHÂN CÁCH ĐẬM NÉT) -->
+    <!-- BẢNG DANH SÁCH CHUYẾN BAY -->
     <div class="bg-white rounded-lg sm:rounded-2xl shadow-sm border border-slate-300 overflow-hidden">
-      <!-- Tối ưu chiều cao khung cuộn phù hợp với phần Freeze mới -->
       <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-190px)] custom-table-scroll">
         <table class="w-full text-left border-collapse">
           <thead id="flightsTableHead">
-            <!-- Header chuẩn VNA Navy & Gold, ghim cố định trên đỉnh bảng -->
+            <!-- Header chuẩn VNA Navy & Gold -->
           </thead>
           <tbody id="flightsTableBody" class="text-xs">
             <!-- Render dữ liệu -->
@@ -290,6 +289,11 @@
     let selectedDate = '';
     let nextDateStr = '';
 
+    // KHÓA ĐIỀU KHIỂN CUỘN GIỮA MÀN HÌNH:
+    // Chỉ cuộn đúng 1 lần khi mới mở trang, đổi thanh (DOM/INTL, DEP/ARR) hoặc đổi Ngày.
+    // Tuyệt đối KHÔNG tự cuộn lại khi Firebase có dữ liệu update mới.
+    let needsInitialCenter = true;
+
     let isSyncingNow = false;
     let isTodayUpdating = false;
     let isFR24Updating = false;
@@ -350,6 +354,9 @@
         fr24MapDay2 = {};
         liveStatusMapDay1 = {};
         liveStatusMapDay2 = {};
+        flightsDay1 = [];
+        flightsDay2 = [];
+        needsInitialCenter = true;
       }
       selectedDate = chosenDate;
       nextDateStr = calculateNextDate(chosenDate);
@@ -378,22 +385,22 @@
       }, () => {});
 
       unsubFr24_1 = onValue(ref(rtdb, `fr24_etas/${selectedDate}`), (frSnap1) => {
-        fr24MapDay1 = { ...fr24MapDay1, ...(frSnap1.val() || {}) };
+        fr24MapDay1 = frSnap1.val() || {};
         renderFlights(false);
       }, () => {});
 
       unsubFr24_2 = onValue(ref(rtdb, `fr24_etas/${nextDateStr}`), (frSnap2) => {
-        fr24MapDay2 = { ...fr24MapDay2, ...(frSnap2.val() || {}) };
+        fr24MapDay2 = frSnap2.val() || {};
         renderFlights(false);
       }, () => {});
 
       unsubStatus1 = onValue(ref(rtdb, `live_statuses/${selectedDate}`), (stSnap1) => {
-        liveStatusMapDay1 = { ...liveStatusMapDay1, ...(stSnap1.val() || {}) };
+        liveStatusMapDay1 = stSnap1.val() || {};
         renderFlights(false);
       }, () => {});
 
       unsubStatus2 = onValue(ref(rtdb, `live_statuses/${nextDateStr}`), (stSnap2) => {
-        liveStatusMapDay2 = { ...liveStatusMapDay2, ...(stSnap2.val() || {}) };
+        liveStatusMapDay2 = stSnap2.val() || {};
         renderFlights(false);
       }, () => {});
     }
@@ -401,10 +408,40 @@
     function combineAndRender() {
       rawFlights = [...flightsDay1, ...flightsDay2];
       document.getElementById('loadingStatus').classList.add('hidden');
-      renderFlights(true);
+      // Chỉ cuộn vào giữa trang nếu needsInitialCenter đang bật VÀ đã tải được dữ liệu
+      if (needsInitialCenter && rawFlights.length > 0) {
+        needsInitialCenter = false;
+        renderFlights(true);
+      } else {
+        renderFlights(false);
+      }
+    }
+
+    // KHÓA BẢO VỆ HIỂN THỊ FR24: Chặn hiển thị giờ FR24 ảo cho các chuyến bay chưa tới khung giờ bay thực tế
+    function isFlightWithinLiveWindow(flightObj) {
+      const fDate = flightObj.date;
+      const staStr = flightObj.scheduled;
+      if (!fDate || !staStr || staStr === '--:--') return false;
+
+      const [Y, M, D] = fDate.split('-').map(Number);
+      const [h, m] = staStr.split(':').map(Number);
+      if (isNaN(Y) || isNaN(h)) return false;
+
+      const staDateObj = new Date(Y, M - 1, D, h, m, 0);
+      const nowObj = new Date();
+      const diffHours = (staDateObj.getTime() - nowObj.getTime()) / (1000 * 3600);
+
+      const fType = (flightObj.flight_type || 'Domestic').toUpperCase();
+      const maxAheadHours = (fType === 'DOMESTIC') ? 3.5 : 14.0;
+
+      // Chuyến bay chỉ có thể đang bay trên FR24 nếu giờ đáp (STA) cách hiện tại từ -4h đến +maxAheadHours
+      return diffHours >= -4.0 && diffHours <= maxAheadHours;
     }
 
     function getIndependentFr24Eta(flightObj) {
+      if (!isFlightWithinLiveWindow(flightObj)) {
+        return '--';
+      }
       const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
       const mapToUse = (flightObj.date === selectedDate) ? fr24MapDay1 : fr24MapDay2;
       if (mapToUse && mapToUse[fNo] && mapToUse[fNo] !== '--') {
@@ -416,10 +453,18 @@
     function getPriorityStatus(flightObj) {
       const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
       const mapToUse = (flightObj.date === selectedDate) ? liveStatusMapDay1 : liveStatusMapDay2;
-      if (mapToUse && mapToUse[fNo]) {
-        return mapToUse[fNo];
+      let statusVal = (mapToUse && mapToUse[fNo]) ? mapToUse[fNo] : (flightObj.remarks || 'Normal');
+
+      // Nếu là ngày tương lai, không hiển thị các trạng thái đã bay/đã đáp bị rò rỉ
+      const nowObj = new Date();
+      const currentTodayStr = nowObj.getFullYear() + '-' + String(nowObj.getMonth() + 1).padStart(2, '0') + '-' + String(nowObj.getDate()).padStart(2, '0');
+      if (flightObj.date > currentTodayStr) {
+        const up = statusVal.toUpperCase();
+        if (up.includes('DEPARTED') || up.includes('LANDED') || up.includes('ARRIVED') || up.includes('ARRIVAL') || up.includes('BOARDING') || up.includes('APPROACH') || up.includes('LANDING')) {
+          return (flightObj.direction === 'Departure') ? 'Check-in open' : 'Normal';
+        }
       }
-      return flightObj.remarks || 'Normal';
+      return statusVal;
     }
 
     function formatVnaStatusBadge(statusText) {
@@ -523,7 +568,7 @@
       }
       thead.innerHTML = headerHtml;
 
-      // CANH GIỮA MÀN HÌNH THEO GIỜ HIỆN TẠI
+      // XÁC ĐỊNH CHUYẾN BAY TIÊU ĐIỂM THEO GIỜ HIỆN TẠI
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       const isLateNight = currentHHMM < '03:00';
@@ -594,7 +639,7 @@
         targetRowIndex = 0;
       }
 
-      // RENDER DỮ LIỆU BẢNG VỚI ĐƯỜNG PHÂN CÁCH ĐẬM
+      // RENDER DỮ LIỆU BẢNG
       const tbody = document.getElementById('flightsTableBody');
 
       if (filtered.length === 0) {
@@ -617,7 +662,6 @@
         const rawCityName = f.route || f.destination_or_from || '--';
         const formattedCityHtml = formatAirportWithIATA(rawCityName);
 
-        // ĐƯỜNG PHÂN CÁCH ĐẬM NÉT
         let trClass = "hover:bg-slate-50/90 transition-colors border-b border-slate-300";
         if (isBoarding) {
           trClass = "vna-boarding-row font-medium border-b border-slate-300";
@@ -685,13 +729,14 @@
 
       tbody.innerHTML = rowsHtml;
 
+      // CHỈ CUỘN VÀO GIỮA MÀN HÌNH KHI ĐƯỢC YÊU CẦU RÕ RÀNG (LẦN ĐẦU VÀO HOẶC CHUYỂN THANH)
       if (shouldCenter) {
         setTimeout(() => {
           const focusRow = document.getElementById('currentFocusFlight');
           if (focusRow) {
             focusRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
-        }, 280);
+        }, 250);
       }
     }
 
