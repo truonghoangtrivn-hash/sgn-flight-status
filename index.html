@@ -216,9 +216,8 @@
     const app = initializeApp(firebaseConfig);
     const rtdb = getDatabase(app);
 
-    // TỪ ĐIỂN MÃ SÂN BAY IATA 3 CHỮ CHO VIETNAM AIRLINES
+    // TỪ ĐIỂN MÃ SÂN BAY IATA 3 CHỮ
     const AIRPORT_IATA_MAP = {
-      // Quốc nội (Domestic)
       "HA NOI": "HAN", "HANOI": "HAN", "HAN": "HAN",
       "DA NANG": "DAD", "DANANG": "DAD", "DAD": "DAD",
       "NHA TRANG": "CXR", "CAM RANH": "CXR", "CXR": "CXR",
@@ -240,8 +239,6 @@
       "RACH GIA": "VKG", "VKG": "VKG",
       "DIEN BIEN": "DIN", "DIN": "DIN",
       "VAN DON": "VDO", "QUANG NINH": "VDO", "VDO": "VDO",
-
-      // Quốc tế (International)
       "TOKYO": "NRT", "NARITA": "NRT", "HANEDA": "HND", "NRT": "NRT", "HND": "HND",
       "OSAKA": "KIX", "KANSAI": "KIX", "KIX": "KIX",
       "NAGOYA": "NGO", "NGO": "NGO",
@@ -281,7 +278,6 @@
       "COPENHAGEN": "CPH", "CPH": "CPH"
     };
 
-    // Hàm format hiển thị sân bay: Desktop hiện Full (IATA), Mobile chỉ hiện IATA 3 chữ!
     function formatAirportWithIATA(rawCity) {
       if (!rawCity || rawCity === '--') return '--';
       const cleanUpper = rawCity.trim().toUpperCase();
@@ -295,7 +291,6 @@
       }
 
       if (iataCode) {
-        // Desktop: Tên đầy đủ (MÃ 3 CHỮ) | Mobile: CHỈ HIỆN ĐÚNG MÃ 3 CHỮ!
         return `
           <span class="hidden sm:inline">${rawCity} (${iataCode})</span>
           <span class="sm:hidden font-mono font-bold tracking-wider text-vna-dark">${iataCode}</span>
@@ -304,7 +299,6 @@
       return rawCity;
     }
 
-    // ĐỌC BỘ NHỚ LOCALSTORAGE CHO TOÀN BỘ TRẠNG THÁI (F5 GIỮ NGUYÊN HIỆN TRẠNG 100%)
     let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
     let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
     let autoPilotEnabled = localStorage.getItem('vna_autopilot_enabled') !== 'false';
@@ -318,19 +312,16 @@
     let isFR24Updating = false;
     let isStatusUpdating = false;
 
-    // Ngăn 1: Dữ liệu VIAGS
     let unsubViags1 = null;
     let unsubViags2 = null;
     let flightsDay1 = [];
     let flightsDay2 = [];
 
-    // Ngăn 2: Flightradar24
     let unsubFr24_1 = null;
     let unsubFr24_2 = null;
     let fr24MapDay1 = {};
     let fr24MapDay2 = {};
 
-    // Ngăn 3: Live Statuses (Ưu tiên số 1)
     let unsubStatus1 = null;
     let unsubStatus2 = null;
     let liveStatusMapDay1 = {};
@@ -485,7 +476,6 @@
           return false;
         }
 
-        // Ca khai thác: 03:00 D -> 02:59 D+1
         const sched = f.scheduled || '';
         if (f.date === selectedDate) {
           if (sched < '03:00') return false;
@@ -501,7 +491,6 @@
         const matchDir = (fDir === currentDirection.toUpperCase());
         const matchType = (fType === currentType.toUpperCase());
 
-        // Tìm kiếm theo số hiệu, tên thành phố, hoặc mã 3 chữ
         const routeText = (f.route || f.destination_or_from || '').toUpperCase();
         const iataMatch = AIRPORT_IATA_MAP[routeText] || '';
         const matchSearch = !searchKey || 
@@ -522,7 +511,7 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // CẬP NHẬT HEADER (FREEZE & HIGHLIGHT ĐẬM CHẤT VNA NAVY & GOLD)
+      // CẬP NHẬT HEADER
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
@@ -544,7 +533,7 @@
             <th class="py-3 px-4 font-bold sticky top-0 bg-vna-dark z-20 text-white">FROM</th>
             <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">STA</th>
             <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">ETA</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">FLIGHTRADAR24</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">Flightradar24</th>
             <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">BELT</th>
             <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">STATUS</th>
           </tr>
@@ -552,63 +541,89 @@
       }
       thead.innerHTML = headerHtml;
 
-      // QUY TẮC 4: TÌM CHUYẾN BAY TIÊU ĐIỂM ĐỂ CANH GIỮA MÀN HÌNH KHI CHUYỂN TRANG
+      // =========================================================================
+      // THUẬT TOÁN CANH GIỮA MÀN HÌNH CHUẨN XÁC THEO GIỜ THỰC TẾ (ĐÃ SỬA LỖI 17:00)
+      // =========================================================================
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       const isLateNight = currentHHMM < '03:00';
       
       let targetRowIndex = -1;
 
-      if (currentDirection === 'Departure') {
-        // 4.1 CHUYẾN BAY ĐI: Ưu tiên chuyến có status "BOARDING"
+      if (currentDirection === 'Arrival') {
+        // 1. Ưu tiên 1: Chuyến đang hạ cánh (LANDING / APPROACH) mà CHƯA ĐÁP
         for (let i = 0; i < filtered.length; i++) {
           const st = getPriorityStatus(filtered[i]).toUpperCase();
-          if (st.includes('BOARDING')) {
+          if ((st.includes('LANDING') || st.includes('APPROACH') || st.includes('ARRIVING')) && !st.includes('LANDED')) {
             targetRowIndex = i;
             break;
           }
         }
-        // Nếu không có chuyến Boarding: Canh chuyến có giờ STD gần nhất
+
+        // 2. Ưu tiên 2: Chuyến đang bay có giờ FR24 gần giờ hiện tại và CHƯA ĐÁP
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
-            const f = filtered[i];
-            if (!isLateNight && f.date === selectedDate && (f.scheduled || '') >= currentHHMM) {
-              targetRowIndex = i;
-              break;
-            } else if (isLateNight && f.date === nextDateStr && (f.scheduled || '') >= currentHHMM) {
+            const st = getPriorityStatus(filtered[i]).toUpperCase();
+            const frEta = getIndependentFr24Eta(filtered[i]);
+            // TUYỆT ĐỐI BỎ QUA NẾU ĐÃ LANDED! CHỈ TÍNH CHUYẾN CHƯA ĐÁP
+            if (!st.includes('LANDED') && frEta && frEta !== '--' && frEta >= currentHHMM) {
               targetRowIndex = i;
               break;
             }
           }
         }
+
+        // 3. Mặc định: Chuyến bay sắp hạ cánh đầu tiên từ giờ hiện tại (STA >= giờ hiện tại) mà CHƯA ĐÁP
+        if (targetRowIndex === -1) {
+          for (let i = 0; i < filtered.length; i++) {
+            const f = filtered[i];
+            const st = getPriorityStatus(f).toUpperCase();
+            const schedTime = f.scheduled || '';
+            // BỎ QUA TẤT CẢ CÁC CHUYẾN ĐÃ LANDED TỪ TRƯỚC!
+            if (!st.includes('LANDED')) {
+              if (!isLateNight && f.date === selectedDate && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              } else if (isLateNight && f.date === nextDateStr && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              }
+            }
+          }
+        }
       } else {
-        // 4.2 CHUYẾN BAY ĐẾN: Ưu tiên chuyến đang đáp từ FR24 hoặc có status "LANDING"
+        // ĐỐI VỚI CHUYẾN BAY ĐI (DEP):
+        // 1. Ưu tiên: Chuyến đang BOARDING mà CHƯA CẤT CÁNH (chưa Departed)
         for (let i = 0; i < filtered.length; i++) {
           const st = getPriorityStatus(filtered[i]).toUpperCase();
-          const frEta = getIndependentFr24Eta(filtered[i]);
-          if (st.includes('LANDING') || st.includes('ARRIVING') || st.includes('APPROACH') || (frEta && frEta !== '--')) {
+          if (st.includes('BOARDING') && !st.includes('DEPARTED')) {
             targetRowIndex = i;
             break;
           }
         }
-        // Nếu không có chuyến đang landing: Canh chuyến có giờ STA gần nhất
+
+        // 2. Mặc định: Chuyến bay sắp khởi hành đầu tiên từ giờ hiện tại (STD >= giờ hiện tại) mà CHƯA CẤT CÁNH
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
             const f = filtered[i];
-            if (!isLateNight && f.date === selectedDate && (f.scheduled || '') >= currentHHMM) {
-              targetRowIndex = i;
-              break;
-            } else if (isLateNight && f.date === nextDateStr && (f.scheduled || '') >= currentHHMM) {
-              targetRowIndex = i;
-              break;
+            const st = getPriorityStatus(f).toUpperCase();
+            const schedTime = f.scheduled || '';
+            if (!st.includes('DEPARTED')) {
+              if (!isLateNight && f.date === selectedDate && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              } else if (isLateNight && f.date === nextDateStr && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              }
             }
           }
         }
       }
 
-      // Mặc định chuyến đầu tiên nếu không khớp
+      // 4. Nếu tất cả các chuyến trong ngày đều đã xong hết: lấy chuyến cuối cùng
       if (targetRowIndex === -1 && filtered.length > 0) {
-        targetRowIndex = 0;
+        targetRowIndex = filtered.length - 1;
       }
 
       // RENDER DỮ LIỆU
@@ -631,8 +646,6 @@
         const isBoarding = remUpper.includes('BOARDING');
 
         const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
-        
-        // ĐỊNH DẠNG TÊN SÂN BAY: Desktop hiện Tên (MÃ), Mobile CHỈ hiện MÃ 3 CHỮ!
         const rawCityName = f.route || f.destination_or_from || '--';
         const formattedCityHtml = formatAirportWithIATA(rawCityName);
 
@@ -714,34 +727,30 @@
       }
     }
 
-    // GHI NHỚ NGÀY KHI ĐỔI Ô LỊCH
     datePicker.addEventListener('change', (e) => {
       localStorage.setItem('vna_selected_date', e.target.value);
       listenToFlights(e.target.value);
     });
 
-    // GHI NHỚ Ô TÌM KIẾM KHI GÕ CHỮ (F5 KHÔNG MẤT)
     searchInput.addEventListener('input', () => {
       localStorage.setItem('vna_search_query', searchInput.value);
       renderFlights(false);
     });
 
-    // GHI NHỚ VÀ CANH GIỮA KHI ĐỔI BOUND (DEP / ARR)
     window.setDirection = (dir) => {
       if (currentDirection === dir) return;
       currentDirection = dir;
       localStorage.setItem('vna_selected_bound', dir);
       updateButtonUI();
-      renderFlights(true); // Canh giữa ngay theo quy tắc 4.1 và 4.2!
+      renderFlights(true);
     };
 
-    // GHI NHỚ VÀ CANH GIỮA KHI ĐỔI TYPE (DOM / INTL)
     window.setType = (type) => {
       if (currentType === type) return;
       currentType = type;
       localStorage.setItem('vna_selected_type', type);
       updateButtonUI();
-      renderFlights(true); // Canh giữa ngay theo quy tắc 4.1 và 4.2!
+      renderFlights(true);
     };
 
     // 1. Nút VIAGS (D)
