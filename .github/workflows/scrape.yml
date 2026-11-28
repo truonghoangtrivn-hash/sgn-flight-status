@@ -11,7 +11,6 @@ on:
         required: false
         default: 'status_only'
 
-# KHÓA CHỐNG XUNG ĐỘT & CHỐNG KẸT HÀNG ĐỢI:
 concurrency:
   group: vna-sgn-scraper-${{ github.event.inputs.mode || 'scheduled_auto' }}
   cancel-in-progress: false
