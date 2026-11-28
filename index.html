@@ -62,7 +62,7 @@
             <span id="refreshText">Cập nhật hôm nay (D)</span>
           </button>
 
-          <!-- Nút Cập nhật riêng Flightradar24 -->
+          <!-- Nút Cập nhật độc lập Flightradar24 -->
           <button id="btnRefreshFR24" onclick="triggerRefreshFR24()" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer">
             <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5"></i>
             <span id="refreshTextFR24">Cập nhật FR24</span>
@@ -151,20 +151,21 @@
       </div>
       <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
         <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay Vietnam Airlines nào khớp với bộ lọc.</p>
+        <p class="font-medium">Chưa có dữ liệu cho ngày này. Hãy bấm nút "Cập nhật hôm nay (D)" ở góc trên bên phải để nạp dữ liệu vào kho mới!</p>
       </div>
     </div>
 
   </main>
 
-  <!-- Firebase Web SDK & Logic Siêu Tối Ưu Hạn Mức -->
+  <!-- Firebase Realtime Database Web SDK (Không giới hạn 50K lượt đọc) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, doc, onSnapshot, collection, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCg4sWBwEwhgaIrNMKVPfCNN7mastS_Kko",
       authDomain: "sgn-flight-status.firebaseapp.com",
+      databaseURL: "https://sgn-flight-status-default-rtdb.asia-southeast1.firebasedatabase.app",
       projectId: "sgn-flight-status",
       storageBucket: "sgn-flight-status.firebasestorage.app",
       messagingSenderId: "141073829827",
@@ -172,7 +173,7 @@
     };
 
     const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    const rtdb = getDatabase(app);
 
     let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
     let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
@@ -219,7 +220,7 @@
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    // ĐỌC GÓI TỔNG THEO NGÀY (CHỈ 2 LƯỢT ĐỌC - TIẾT KIỆM 99.5% HẠN MỨC)
+    // Lắng nghe dữ liệu trực tiếp từ Realtime Database
     function listenToFlights(chosenDate) {
       selectedDate = chosenDate;
       nextDateStr = calculateNextDate(chosenDate);
@@ -229,25 +230,21 @@
 
       document.getElementById('loadingStatus').classList.remove('hidden');
 
-      // 1. Đọc gói ngày D
-      unsubDoc1 = onSnapshot(doc(db, "daily_schedules", selectedDate), (snap1) => {
-        if (snap1.exists()) {
-          flightsDay1 = snap1.data().flights || [];
-          combineAndRender();
-        } else {
-          // Dự phòng đọc tạm collection cũ nếu gói ngày chưa nạp
-          fallbackOldCollection(selectedDate);
-        }
+      // 1. Lắng nghe gói ngày D
+      unsubDoc1 = onValue(ref(rtdb, `daily_schedules/${selectedDate}`), (snap1) => {
+        const val1 = snap1.val();
+        flightsDay1 = (val1 && Array.isArray(val1.flights)) ? val1.flights : [];
+        combineAndRender();
       }, (err) => {
-        fallbackOldCollection(selectedDate);
+        console.error("Lỗi đọc Realtime Database:", err);
+        document.getElementById('loadingStatus').classList.add('hidden');
       });
 
-      // 2. Đọc gói ngày D+1
-      unsubDoc2 = onSnapshot(doc(db, "daily_schedules", nextDateStr), (snap2) => {
-        if (snap2.exists()) {
-          flightsDay2 = snap2.data().flights || [];
-          combineAndRender();
-        }
+      // 2. Lắng nghe gói ngày D+1
+      unsubDoc2 = onValue(ref(rtdb, `daily_schedules/${nextDateStr}`), (snap2) => {
+        const val2 = snap2.val();
+        flightsDay2 = (val2 && Array.isArray(val2.flights)) ? val2.flights : [];
+        combineAndRender();
       }, () => {});
     }
 
@@ -257,27 +254,13 @@
       renderFlights(true);
     }
 
-    // Dự phòng tương thích
-    function fallbackOldCollection(d) {
-      const q = query(collection(db, "flights"), where("date", "in", [selectedDate, nextDateStr]));
-      onSnapshot(q, (snapshot) => {
-        rawFlights = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const fNo = (data.flight_no || '').toUpperCase().trim();
-          if (fNo.startsWith("VN")) rawFlights.push(data);
-        });
-        document.getElementById('loadingStatus').classList.add('hidden');
-        renderFlights(true);
-      }, () => {
-        document.getElementById('loadingStatus').classList.add('hidden');
-      });
-    }
-
     function renderFlights(shouldScroll = false) {
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
       const filtered = rawFlights.filter(f => {
+        const fNo = (f.flight_no || '').toUpperCase().trim();
+        if (!fNo.startsWith("VN")) return false;
+
         const rem = (f.remarks || '').toUpperCase();
         if (rem.includes('CANCEL')) {
           return false;
@@ -347,7 +330,7 @@
       }
       thead.innerHTML = headerHtml;
 
-      // Tìm chuyến bay trùng giờ hiện tại
+      // Tìm chuyến bay tiêu điểm
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       const isLateNight = currentHHMM < '03:00';
@@ -435,7 +418,7 @@
         if (f.fr24_eta && f.fr24_eta !== '--') {
           fr24Cell = `
             <div class="flex items-center justify-center space-x-1.5">
-              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ hạ cánh thực tế (ETA) từ Flightradar24">
+              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ dự đáp (ETA) từ Flightradar24">
                 ${f.fr24_eta}
               </span>
               <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" title="Xem radar" class="inline-flex items-center p-1 rounded text-yellow-500 hover:text-yellow-600 hover:bg-slate-100 transition">
@@ -532,11 +515,11 @@
         const data = await res.json();
 
         if (res.ok) {
-          let countdown = 60;
+          let countdown = 90;
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
-              text.innerText = `Đang cào dữ liệu... (${countdown}s)`;
+              text.innerText = `Đang cào VIAGS... (${countdown}s)`;
             } else {
               clearInterval(timer);
               btn.disabled = false;
@@ -561,7 +544,7 @@
       }
     };
 
-    // Nút Cập nhật Flightradar24
+    // Nút Cập nhật độc lập Flightradar24
     window.triggerRefreshFR24 = async () => {
       const btn = document.getElementById('btnRefreshFR24');
       const icon = document.getElementById('refreshIconFR24');
@@ -579,7 +562,7 @@
         const data = await res.json();
 
         if (res.ok) {
-          let countdown = 30;
+          let countdown = 35;
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
