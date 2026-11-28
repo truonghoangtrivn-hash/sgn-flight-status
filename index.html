@@ -36,6 +36,15 @@
     .boarding-row-blink {
       animation: boardingPulse 1.2s ease-in-out infinite;
     }
+    /* Thanh cuộn mượt mà cho bảng */
+    .custom-table-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-table-scroll::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
@@ -54,24 +63,30 @@
           </div>
         </div>
         
-        <!-- Cụm 3 nút Cập Nhật & Công tắc Tự động thông minh -->
+        <!-- Cụm các nút Cập Nhật & Công tắc Tự động thông minh -->
         <div class="mt-2 sm:mt-0 flex flex-wrap items-center gap-2">
-          <!-- Nút 1: Cập nhật hôm nay (Phần mềm chính VIAGS) -->
+          <!-- Nút 1: Cập nhật hôm nay (VIAGS tổng) -->
           <button id="btnRefresh" onclick="triggerRefreshToday(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-yellow-400 active:scale-95 transition shadow-sm cursor-pointer">
             <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5"></i>
-            <span id="refreshText">Cập nhật hôm nay (D)</span>
+            <span id="refreshText">Cập nhật VIAGS (D)</span>
           </button>
 
-          <!-- Nút 2: Cập nhật độc lập Flightradar24 (Siêu tốc 25s) -->
+          <!-- Nút 2: Cập nhật độc lập Flightradar24 -->
           <button id="btnRefreshFR24" onclick="triggerRefreshFR24(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer">
             <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5"></i>
             <span id="refreshTextFR24">Cập nhật FR24</span>
           </button>
 
-          <!-- Nút 3: Công tắc Tự động (Auto-Pilot: Tự quét FR24 mỗi 5 phút & VIAGS mỗi 15 phút) -->
-          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Bấm để Bật/Tắt tự động quét định kỳ (FR24 mỗi 5 phút, VIAGS mỗi 15 phút)" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer">
+          <!-- Nút 3: NÚT MỚI - CẬP NHẬT RIÊNG CỘT STATUS (02 PHÚT/LẦN) -->
+          <button id="btnRefreshStatus" onclick="triggerRefreshStatus(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-sky-700 text-white hover:bg-sky-800 active:scale-95 transition shadow-sm cursor-pointer">
+            <i id="refreshIconStatus" class="fa-solid fa-clock mr-1.5"></i>
+            <span id="refreshTextStatus">Cập nhật STATUS</span>
+          </button>
+
+          <!-- Nút 4: Công tắc Tự động thông minh 3 nhịp -->
+          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Tự động quét: STATUS mỗi 2 phút, FR24 mỗi 3 phút, VIAGS mỗi 10 phút" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer">
             <span id="autoPilotDot" class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span>
-            <span id="autoPilotText">Tự động (05:00)</span>
+            <span id="autoPilotText">Tự động: BẬT</span>
           </button>
         </div>
       </div>
@@ -127,10 +142,10 @@
   </div>
 
   <!-- Main Container -->
-  <main class="max-w-7xl mx-auto px-4 py-5">
+  <main class="max-w-7xl mx-auto px-4 py-4">
 
     <!-- Thống kê nhanh & Trạng thái tải -->
-    <div class="flex items-center justify-between mb-3 px-1">
+    <div class="flex items-center justify-between mb-2.5 px-1">
       <div class="text-sm font-semibold text-slate-600">
         Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Chu kỳ: 03:00 D &rarr; 02:59 D+1)
       </div>
@@ -139,12 +154,13 @@
       </div>
     </div>
 
-    <!-- Bảng danh sách chuyến bay -->
+    <!-- BẢNG DANH SÁCH CHUYẾN BAY (GHIM CỐ ĐỊNH & HIGHLIGHT TIÊU ĐỀ BẢNG) -->
     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="overflow-x-auto">
+      <!-- Khung cuộn có chiều cao linh hoạt, tiêu đề thead luôn dính chặt ở trên cùng -->
+      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-215px)] custom-table-scroll">
         <table class="w-full text-left border-collapse">
           <thead id="flightsTableHead">
-            <!-- Header chuẩn tiếng Anh theo Bound -->
+            <!-- Header chuẩn tiếng Anh, ghim cố định và highlight nổi bật -->
           </thead>
           <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
             <!-- Render dữ liệu -->
@@ -159,7 +175,7 @@
 
   </main>
 
-  <!-- Firebase Realtime Database Web SDK (Tách biệt 2 ngăn độc lập & Lưu cộng dồn) -->
+  <!-- Firebase Realtime Database Web SDK & Logic Điều Hành 3 Nhịp -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
@@ -261,7 +277,7 @@
         combineAndRender();
       }, () => {});
 
-      // 2. Ngăn độc lập Flightradar24 (fr24_etas) - Hợp nhất cộng dồn, không bao giờ mất dữ liệu đã có
+      // 2. Ngăn độc lập Flightradar24 (fr24_etas) - Hợp nhất cộng dồn
       unsubFr24_1 = onValue(ref(rtdb, `fr24_etas/${selectedDate}`), (frSnap1) => {
         const incoming1 = frSnap1.val() || {};
         fr24MapDay1 = { ...fr24MapDay1, ...incoming1 };
@@ -281,7 +297,6 @@
       renderFlights(true);
     }
 
-    // Lấy giờ ETA độc lập từ ngăn fr24_etas
     function getIndependentFr24Eta(flightObj) {
       const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
       const mapToUse = (flightObj.date === selectedDate) ? fr24MapDay1 : fr24MapDay2;
@@ -337,31 +352,31 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // CẬP NHẬT HEADER
+      // CẬP NHẬT HEADER (FREEZE & HIGHLIGHT ĐẬM CHẤT HÀNG KHÔNG)
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
       if (currentDirection === 'Departure') {
         headerHtml = `
-          <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
-            <th class="py-3.5 px-4 font-bold">FLT NO.</th>
-            <th class="py-3.5 px-4 font-bold">DEST</th>
-            <th class="py-3.5 px-4 font-bold text-center">STD</th>
-            <th class="py-3.5 px-4 font-bold text-center">ETD</th>
-            <th class="py-3.5 px-4 font-bold text-center">GATE</th>
-            <th class="py-3.5 px-4 font-bold text-center">STATUS</th>
+          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold">
+            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT NO.</th>
+            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20">DEST</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STD</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">ETD</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">GATE</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STATUS</th>
           </tr>
         `;
       } else {
         headerHtml = `
-          <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
-            <th class="py-3.5 px-4 font-bold">FLT NO.</th>
-            <th class="py-3.5 px-4 font-bold">FROM</th>
-            <th class="py-3.5 px-4 font-bold text-center">STA</th>
-            <th class="py-3.5 px-4 font-bold text-center">ETA</th>
-            <th class="py-3.5 px-4 font-bold text-center">Flightradar24</th>
-            <th class="py-3.5 px-4 font-bold text-center">BELT</th>
-            <th class="py-3.5 px-4 font-bold text-center">STATUS</th>
+          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold">
+            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT NO.</th>
+            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20">FROM</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STA</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">ETA</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">Flightradar24</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">BELT</th>
+            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STATUS</th>
           </tr>
         `;
       }
@@ -451,7 +466,6 @@
           ? `<span class="text-[11px] text-sky-600 font-semibold ml-1">(+1)</span>` 
           : '';
 
-        // CHỈ LẤY DỮ LIỆU TỪ NGĂN ĐỘC LẬP fr24_etas
         const independentEta = getIndependentFr24Eta(f);
         let fr24Cell = '';
         if (independentEta !== '--') {
@@ -536,7 +550,7 @@
       renderFlights(false);
     };
 
-    // 1. Nút Cập nhật hôm nay (Phần mềm chính VIAGS)
+    // 1. Nút Cập nhật hôm nay (VIAGS tổng)
     window.triggerRefreshToday = async (isSilent = false) => {
       const btn = document.getElementById('btnRefresh');
       const icon = document.getElementById('refreshIcon');
@@ -558,28 +572,28 @@
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
-              text.innerText = `Đang cào VIAGS... (${countdown}s)`;
+              text.innerText = `Cào VIAGS... (${countdown}s)`;
             } else {
               clearInterval(timer);
               btn.disabled = false;
               btn.classList.remove('opacity-75', 'cursor-not-allowed');
               icon.classList.remove('fa-spin');
-              text.innerText = 'Cập nhật hôm nay (D)';
+              text.innerText = 'Cập nhật VIAGS (D)';
             }
           }, 1000);
         } else {
-          if (!isSilent) alert('Lỗi: ' + (data.error || 'Không thể gửi lệnh cập nhật'));
+          if (!isSilent) alert('Lỗi: ' + (data.error || 'Không thể gửi lệnh'));
           btn.disabled = false;
           btn.classList.remove('opacity-75', 'cursor-not-allowed');
           icon.classList.remove('fa-spin');
-          text.innerText = 'Cập nhật hôm nay (D)';
+          text.innerText = 'Cập nhật VIAGS (D)';
         }
       } catch (err) {
         if (!isSilent) alert('Lỗi kết nối máy chủ!');
         btn.disabled = false;
         btn.classList.remove('opacity-75', 'cursor-not-allowed');
         icon.classList.remove('fa-spin');
-        text.innerText = 'Cập nhật hôm nay (D)';
+        text.innerText = 'Cập nhật VIAGS (D)';
       }
     };
 
@@ -630,9 +644,55 @@
       }
     };
 
-    // 3. CÔNG TẮC TỰ ĐỘNG QUÉT ĐỊNH KỲ (AUTO-PILOT: FR24 MỖI 5 PHÚT, VIAGS MỖI 15 PHÚT)
-    let autoSecondsLeft = 300; // Chu kỳ 5 phút (300 giây)
-    let autoCycleCount = 0;
+    // 3. NÚT MỚI: CẬP NHẬT RIÊNG CỘT STATUS (02 PHÚT/LẦN)
+    window.triggerRefreshStatus = async (isSilent = false) => {
+      const btn = document.getElementById('btnRefreshStatus');
+      const icon = document.getElementById('refreshIconStatus');
+      const text = document.getElementById('refreshTextStatus');
+
+      if (btn.disabled) return;
+
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      icon.classList.add('fa-spin');
+      text.innerText = 'Đang gửi...';
+
+      try {
+        const res = await fetch('/api/refresh-status', { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok) {
+          let countdown = 45;
+          const timer = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+              text.innerText = `STATUS... (${countdown}s)`;
+            } else {
+              clearInterval(timer);
+              btn.disabled = false;
+              btn.classList.remove('opacity-75', 'cursor-not-allowed');
+              icon.classList.remove('fa-spin');
+              text.innerText = 'Cập nhật STATUS';
+            }
+          }, 1000);
+        } else {
+          if (!isSilent) alert('Lỗi: ' + (data.error || 'Không thể gửi lệnh'));
+          btn.disabled = false;
+          btn.classList.remove('opacity-75', 'cursor-not-allowed');
+          icon.classList.remove('fa-spin');
+          text.innerText = 'Cập nhật STATUS';
+        }
+      } catch (err) {
+        if (!isSilent) alert('Lỗi kết nối máy chủ!');
+        btn.disabled = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        icon.classList.remove('fa-spin');
+        text.innerText = 'Cập nhật STATUS';
+      }
+    };
+
+    // 4. LẬP TRÌNH AUTO-PILOT 3 NHỊP: STATUS 2 PHÚT | FR24 3 PHÚT | VIAGS 10 PHÚT
+    let autoSec = 0;
 
     function updateAutoPilotUI() {
       const btn = document.getElementById('btnAutoPilot');
@@ -642,9 +702,7 @@
       if (autoPilotEnabled) {
         btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer";
         dot.className = "w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse";
-        const mins = String(Math.floor(autoSecondsLeft / 60)).padStart(2, '0');
-        const secs = String(autoSecondsLeft % 60).padStart(2, '0');
-        txt.innerText = `Tự động (${mins}:${secs})`;
+        txt.innerText = "Tự động: BẬT";
       } else {
         btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer";
         dot.className = "w-2 h-2 mr-2 bg-slate-400 rounded-full";
@@ -655,28 +713,28 @@
     window.toggleAutoPilot = () => {
       autoPilotEnabled = !autoPilotEnabled;
       localStorage.setItem('vna_autopilot_enabled', autoPilotEnabled ? 'true' : 'false');
-      if (autoPilotEnabled) {
-        autoSecondsLeft = 300;
-      }
       updateAutoPilotUI();
     };
 
+    // Bộ đếm nhịp tự động (Tách lệch giây tuyệt đối không bao giờ kẹt nhau)
     setInterval(() => {
       if (!autoPilotEnabled) return;
-      autoSecondsLeft--;
-      if (autoSecondsLeft <= 0) {
-        autoSecondsLeft = 300; // Reset chu kỳ 5 phút
-        autoCycleCount++;
-        // Mỗi 5 phút tự động quét FR24
-        window.triggerRefreshFR24(true);
-        // Mỗi 15 phút (3 chu kỳ 5 phút), tự động quét VIAGS sau 45 giây để không trùng thời điểm
-        if (autoCycleCount % 3 === 0) {
-          setTimeout(() => {
-            if (autoPilotEnabled) window.triggerRefreshToday(true);
-          }, 45000);
-        }
+      autoSec++;
+
+      // Nhịp 1: Mỗi 2 phút (120 giây) -> Tự động quét STATUS ngày hôm nay
+      if (autoSec % 120 === 0) {
+        window.triggerRefreshStatus(true);
       }
-      updateAutoPilotUI();
+
+      // Nhịp 2: Mỗi 3 phút (180 giây, lệch 30 giây) -> Tự động quét FR24
+      if ((autoSec + 30) % 180 === 0) {
+        window.triggerRefreshFR24(true);
+      }
+
+      // Nhịp 3: Mỗi 10 phút (600 giây, lệch 60 giây) -> Tự động quét VIAGS tổng
+      if ((autoSec + 60) % 600 === 0) {
+        window.triggerRefreshToday(true);
+      }
     }, 1000);
 
     updateButtonUI();
