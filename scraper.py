@@ -303,7 +303,6 @@ def merge_and_save_viags_section(d, section_flights, tz_vn):
         k = f"{new_item.get('direction')}_{new_item.get('flight_type')}_{f_no}"
         direction = (new_item.get("direction") or "").upper()
 
-        # QUY TẮC KHÓA CỐ ĐỊNH: Nếu chuyến đã Departed hoặc Landed -> KHÓA VĨNH VIỄN
         prior_status = live_status_map.get(f_no)
         if prior_status:
             if direction == "DEPARTURE" and "DEPARTED" in prior_status.upper():
@@ -423,9 +422,11 @@ def scrape_viags():
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     now_vn = datetime.now(tz_vn)
 
+    # ĐỊNH NGHĨA 3 NGÀY LIÊN TIẾP: HÔM NAY (D), NGÀY MAI (D+1), NGÀY MỐT (D+2)
     today_str = now_vn.strftime("%Y-%m-%d")
     tomorrow_str = (now_vn + timedelta(days=1)).strftime("%Y-%m-%d")
-    target_dates = [today_str, tomorrow_str]
+    day_after_str = (now_vn + timedelta(days=2)).strftime("%Y-%m-%d")
+    target_dates = [today_str, tomorrow_str, day_after_str]
 
     scrape_mode = os.environ.get("SCRAPE_MODE", "scheduled_auto")
 
@@ -435,23 +436,28 @@ def scrape_viags():
         print("=== HOÀN TẤT QUÉT 3 TẦNG FLIGHTRADAR24 ===")
         return
 
-    # CHẾ ĐỘ 2: CẬP NHẬT RIÊNG STATUS (TỐI ƯU SIÊU TỐC TRONG 30 GIÂY)
+    # CHẾ ĐỘ 2: CẬP NHẬT RIÊNG STATUS
     is_status_only = (scrape_mode == "status_only")
     if is_status_only:
         print(f"=======================================================")
         print(f" >>> [CHẾ ĐỘ STATUS SIÊU TỐC 30S]: NGÀY {today_str} <<<")
         print(f"=======================================================")
         scrape_dates = [today_str]
-        # Đối với STATUS: Chỉ cần bấm 6 lần Load more là đã bao quát toàn bộ ca trực hiện tại
         max_load_clicks = 6
     elif scrape_mode == "today_only":
-        scrape_dates = [today_str]
+        # Nút Cập nhật hôm nay: Cào cả 3 ngày nếu ngày mốt (D+2) chưa có để đủ chu kỳ
+        if not load_day_flights(day_after_str):
+            scrape_dates = [today_str, tomorrow_str, day_after_str]
+            print(f">>> [PHẦN MỀM CHÍNH]: Cào cả 3 ngày D ({today_str}), D+1 ({tomorrow_str}), D+2 ({day_after_str}) để đủ chu kỳ <<<")
+        else:
+            scrape_dates = [today_str]
+            print(f">>> [PHẦN MỀM CHÍNH]: Quét ngày hôm nay {today_str} <<<")
         max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét ngày hôm nay {today_str} <<<")
     else:
-        scrape_dates = [today_str, tomorrow_str]
+        # Chạy tự động hoặc both_days: Luôn quét đủ cả 3 ngày D, D+1, D+2
+        scrape_dates = [today_str, tomorrow_str, day_after_str]
         max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét cả 2 ngày ({scrape_dates}) <<<")
+        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét trọn vẹn 3 ngày: D ({today_str}), D+1 ({tomorrow_str}), D+2 ({day_after_str}) <<<")
         if scrape_mode == "scheduled_auto":
             run_fr24_cumulative_update(target_dates, now_vn)
             cleanup_old_data(now_vn)
@@ -626,7 +632,7 @@ def scrape_viags():
 
         browser.close()
 
-    print("=== HOÀN TẤT CẬP NHẬT STATUS SIÊU TỐC TRONG 30 GIÂY ===")
+    print("=== ĐÃ HOÀN TẤT CẬP NHẬT CỘNG DỒN TOÀN BỘ 3 NGÀY THÀNH CÔNG! ===")
 
 if __name__ == "__main__":
     scrape_viags()
