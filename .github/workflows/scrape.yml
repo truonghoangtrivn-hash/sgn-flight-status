@@ -11,10 +11,10 @@ on:
         required: false
         default: 'both_days'
 
-# Chống xung đột: Tách riêng luồng VIAGS và luồng FR24, không bao giờ kẹt nhau
+# Không bao giờ hủy ngang tiến trình đang chạy (cancel-in-progress: false)
 concurrency:
   group: scrape-${{ github.event.inputs.mode || 'scheduled_auto' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   scrape:
