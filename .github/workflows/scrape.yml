@@ -7,13 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Chế độ cào (today_only, both_days, fr24_only, status_only)'
+        description: 'Chế độ cào (status_only, fr24_only, today_only, both_days)'
         required: false
-        default: 'both_days'
+        default: 'status_only'
+
+# KHÓA CHỐNG XUNG ĐỘT & CHỐNG KẸT HÀNG ĐỢI:
+# Gom nhóm theo chế độ chạy để không bao giờ có 2 tiến trình cùng loại đè lên nhau
+concurrency:
+  group: vna-sgn-scraper-${{ github.event.inputs.mode || 'scheduled_auto' }}
+  cancel-in-progress: false
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,11 +30,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies (Siêu tốc khi quét FR24)
+      - name: Cache Python & Playwright Chromium (Tăng tốc khởi động cho chu kỳ 60s)
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-v1
+
+      - name: Install dependencies (Lấy từ Cache siêu tốc)
         run: |
           pip install playwright firebase-admin pytz
           if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
-            playwright install chromium
+            if [ "${{ steps.cache-playwright.outputs.cache-hit }}" != "true" ]; then
+              playwright install chromium
+            fi
           fi
 
       - name: Run Scraper
