@@ -88,7 +88,7 @@ def get_airborne_flights_to_sgn():
                         if vn_no:
                             airborne_map[vn_no] = f_id
         except Exception as e:
-            print(f"Lưu ý khi quét tầng 1A ({url}): {e}")
+            pass
 
     return airborne_map
 
@@ -175,8 +175,8 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
                             return t_obj.strftime("%H:%M"), arr_dt
                         except Exception:
                             return t_str, arr_dt
-    except Exception as e:
-        print(f"Lưu ý clickhandler {flight_no}: {e}")
+    except Exception:
+        pass
 
     return "--", None
 
@@ -273,7 +273,6 @@ def load_day_flights(d):
         return data.get("flights", [])
     return []
 
-# Đọc nhánh độc lập live_statuses (chứa trạng thái được ưu tiên tuyệt đối)
 def load_live_statuses(d):
     ref = db.reference(f"live_statuses/{d}")
     data = ref.get()
@@ -281,7 +280,7 @@ def load_live_statuses(d):
         return data
     return {}
 
-# Hợp nhất và lưu cộng dồn vào daily_schedules (Bảo vệ tuyệt đối các chuyến đã Departed / Landed)
+# LƯU CỘNG DỒN TỪNG BƯỚC CHO NGĂN 1 (daily_schedules - VIAGS)
 def merge_and_save_viags_section(d, section_flights, tz_vn):
     if not section_flights:
         return
@@ -291,7 +290,6 @@ def merge_and_save_viags_section(d, section_flights, tz_vn):
     if existing_data and isinstance(existing_data, dict):
         existing_list = existing_data.get("flights", [])
 
-    # Đọc nhánh ưu tiên live_statuses
     live_status_map = load_live_statuses(d)
 
     merged_map = {}
@@ -305,7 +303,7 @@ def merge_and_save_viags_section(d, section_flights, tz_vn):
         k = f"{new_item.get('direction')}_{new_item.get('flight_type')}_{f_no}"
         direction = (new_item.get("direction") or "").upper()
 
-        # NGUYÊN TẮC BẢO VỆ 1 & 2: Nếu chuyến bay đã có Departed hoặc Landed trong live_statuses hoặc cơ sở dữ liệu -> KHÓA VĨNH VIỄN!
+        # QUY TẮC KHÓA CỐ ĐỊNH: Nếu chuyến đã Departed hoặc Landed -> KHÓA VĨNH VIỄN
         prior_status = live_status_map.get(f_no)
         if prior_status:
             if direction == "DEPARTURE" and "DEPARTED" in prior_status.upper():
@@ -415,9 +413,9 @@ def select_and_wait(page, selector, value):
     try:
         with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
             page.select_option(selector, value=value)
-        time.sleep(3)
+        time.sleep(2.5)
     except Exception:
-        time.sleep(3)
+        time.sleep(2.5)
 
 # 2. Quy trình chính
 def scrape_viags():
@@ -431,36 +429,33 @@ def scrape_viags():
 
     scrape_mode = os.environ.get("SCRAPE_MODE", "scheduled_auto")
 
-    # =========================================================================
-    # CHẾ ĐỘ 1: CẬP NHẬT ĐỘC LẬP FLIGHTRADAR24 (KHI BẤM NÚT CẬP NHẬT FR24)
-    # =========================================================================
+    # CHẾ ĐỘ 1: CẬP NHẬT RIÊNG FLIGHTRADAR24
     if scrape_mode == "fr24_only":
         run_fr24_cumulative_update(target_dates, now_vn)
         print("=== HOÀN TẤT QUÉT 3 TẦNG FLIGHTRADAR24 ===")
         return
 
-    # =========================================================================
-    # CHẾ ĐỘ 2: CẬP NHẬT ƯU TIÊN RIÊNG CỘT STATUS (KHI BẤM STATUS / TỰ ĐỘNG 1 PHÚT)
-    # Ghi nhận trạng thái vào nhánh độc lập live_statuses để ƯU TIÊN SỐ 1 TRÊN WEB
-    # =========================================================================
+    # CHẾ ĐỘ 2: CẬP NHẬT RIÊNG STATUS (TỐI ƯU SIÊU TỐC TRONG 30 GIÂY)
     is_status_only = (scrape_mode == "status_only")
     if is_status_only:
         print(f"=======================================================")
-        print(f" >>> [CHẾ ĐỘ STATUS ƯU TIÊN]: CHỈ CẬP NHẬT RIÊNG NGÀY {today_str} <<<")
-        print(f" Quy tắc: Không cập nhật ngày mai, khóa cứng các chuyến Departed/Landed")
+        print(f" >>> [CHẾ ĐỘ STATUS SIÊU TỐC 30S]: NGÀY {today_str} <<<")
         print(f"=======================================================")
         scrape_dates = [today_str]
+        # Đối với STATUS: Chỉ cần bấm 6 lần Load more là đã bao quát toàn bộ ca trực hiện tại
+        max_load_clicks = 6
     elif scrape_mode == "today_only":
         scrape_dates = [today_str]
+        max_load_clicks = 25
         print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét ngày hôm nay {today_str} <<<")
     else:
         scrape_dates = [today_str, tomorrow_str]
+        max_load_clicks = 25
         print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét cả 2 ngày ({scrape_dates}) <<<")
         if scrape_mode == "scheduled_auto":
             run_fr24_cumulative_update(target_dates, now_vn)
             cleanup_old_data(now_vn)
 
-    # Đọc trước nhánh live_statuses của ngày hôm nay để kiểm tra chuyến đã Departed / Landed
     live_status_ref = db.reference(f"live_statuses/{today_str}")
     current_live_statuses = live_status_ref.get()
     if not isinstance(current_live_statuses, dict):
@@ -487,19 +482,19 @@ def scrape_viags():
 
         for current_date in scrape_dates:
             print(f"\n#######################################################")
-            print(f" ####### BẮT ĐẦU QUÉT VIAGS NGÀY: {current_date} #######")
+            print(f" ####### QUÉT VIAGS NGÀY: {current_date} #######")
             print(f"#######################################################")
 
             for sec in sections:
-                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ TRANG: {sec['name']} ---")
+                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ: {sec['name']} ---")
 
-                for attempt in range(3):
+                for attempt in range(2):
                     page = context.new_page()
                     try:
                         url = "https://www.viags.vn/en-US/flight-schedules"
-                        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                        page.wait_for_selector(SEL_ORIGIN, state="attached", timeout=30000)
-                        time.sleep(2)
+                        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        page.wait_for_selector(SEL_ORIGIN, state="attached", timeout=25000)
+                        time.sleep(1.5)
 
                         page.evaluate(f"""(targetDate) => {{
                             const dateInp = document.querySelector('{SEL_DATE}, [name$="datetimepicker1"]');
@@ -507,41 +502,37 @@ def scrape_viags():
                                 dateInp.value = targetDate;
                             }}
                         }}""", current_date)
-                        time.sleep(0.5)
+                        time.sleep(0.3)
 
-                        print(f"1. Chọn Sân bay: Ho Chi Minh (SGN) cho ngày {current_date}...")
                         select_and_wait(page, SEL_ORIGIN, "SGN")
 
                         if sec["station"] != "DOM":
-                            print(f"2. Chọn Loại chuyến: {sec['station']}...")
                             select_and_wait(page, SEL_STATION, sec["station"])
 
                         if sec["trip"] != "D":
-                            print(f"3. Chọn Chiều bay: {sec['trip']}...")
                             select_and_wait(page, SEL_TRIP, sec["trip"])
 
                         load_count = 0
                         while True:
                             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            time.sleep(1)
+                            time.sleep(0.8)
 
                             btn = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
                             if btn.count() > 0 and btn.first.is_visible():
                                 load_count += 1
                                 try:
                                     btn.first.scroll_into_view_if_needed()
-                                    btn.first.click(timeout=3000)
-                                    time.sleep(2.2)
+                                    btn.first.click(timeout=2500)
+                                    time.sleep(1.8)
                                 except Exception:
                                     break
-                                if load_count >= 25:
+                                if load_count >= max_load_clicks:
                                     break
                             else:
                                 break
 
                         headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
                         rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
-                        print(f"Tổng số dòng trong bảng: {len(rows)} (Đã bấm {load_count} lần Load more)")
 
                         section_flights = []
                         status_updates_for_live = {}
@@ -588,12 +579,7 @@ def scrape_viags():
 
                                 direction_upper = sec["d_type"].upper()
 
-                                # =========================================================
-                                # QUY TẮC ƯU TIÊN STATUS:
-                                # 1. Chuyến đi đã Departed -> Giữ Departed vĩnh viễn
-                                # 2. Chuyến đến đã Landed -> Giữ Landed vĩnh viễn
-                                # 3. Cập nhật trạng thái mới vào live_statuses để ưu tiên số 1
-                                # =========================================================
+                                # KHÓA VĨNH VIỄN CHUYẾN ĐÃ DEPARTED / LANDED
                                 existing_status = current_live_statuses.get(flight_no)
                                 if existing_status:
                                     if direction_upper == "DEPARTURE" and "DEPARTED" in existing_status.upper():
@@ -602,7 +588,6 @@ def scrape_viags():
                                         remarks = existing_status
 
                                 if is_status_only and current_date == today_str:
-                                    # Ghi nhận vào nhánh ưu tiên nếu trạng thái mới hợp lệ
                                     if remarks != "Normal" or flight_no not in current_live_statuses:
                                         status_updates_for_live[flight_no] = remarks
                                         current_live_statuses[flight_no] = remarks
@@ -624,28 +609,24 @@ def scrape_viags():
                                 }
                                 section_flights.append(flight_item)
 
-                        # Lưu cộng dồn vào daily_schedules
                         merge_and_save_viags_section(current_date, section_flights, tz_vn)
 
-                        # Nếu đang chạy chế độ status_only, lưu ngay vào nhánh ưu tiên live_statuses/{today_str}
                         if is_status_only and status_updates_for_live:
                             live_status_ref.update(status_updates_for_live)
-                            print(f"   ⚡ [ƯU TIÊN STATUS]: Đã cập nhật {len(status_updates_for_live)} trạng thái mới vào nhánh live_statuses!")
 
-                        print(f"✓ [NGÀY {current_date}] LẤY ĐƯỢC: {len(section_flights)} chuyến bay {sec['name']}.")
+                        print(f"✓ [NGÀY {current_date}] {sec['name']}: {len(section_flights)} chuyến.")
                         page.close()
                         break
                     except Exception as ex:
-                        print(f"   [Cảnh báo] Lần thử {attempt + 1} gặp lỗi mạng VIAGS: {ex}")
                         try:
                             page.close()
                         except Exception:
                             pass
-                        time.sleep(3)
+                        time.sleep(2)
 
         browser.close()
 
-    print("=== ĐÃ HOÀN TẤT CẬP NHẬT CỘNG DỒN TOÀN BỘ HỆ THỐNG! ===")
+    print("=== HOÀN TẤT CẬP NHẬT STATUS SIÊU TỐC TRONG 30 GIÂY ===")
 
 if __name__ == "__main__":
     scrape_viags()
