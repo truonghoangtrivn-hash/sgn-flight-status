@@ -7,14 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Chế độ cào (today_only, both_days, fr24_only)'
+        description: 'Chế độ cào (today_only, both_days, fr24_only, status_only)'
         required: false
         default: 'both_days'
-
-# Không bao giờ hủy ngang tiến trình đang chạy
-concurrency:
-  group: scrape-${{ github.event.inputs.mode || 'scheduled_auto' }}
-  cancel-in-progress: false
 
 jobs:
   scrape:
@@ -28,10 +23,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies (Cài gói lệnh siêu tốc)
+      - name: Install dependencies (Siêu tốc khi quét FR24)
         run: |
           pip install playwright firebase-admin pytz
-          # Chỉ tải trình duyệt nặng Chromium khi cào VIAGS, bỏ qua khi quét FR24
           if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
             playwright install chromium
           fi
