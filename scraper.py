@@ -87,7 +87,7 @@ def get_airborne_flights_to_sgn():
 
                         if vn_no:
                             airborne_map[vn_no] = f_id
-        except Exception as e:
+        except Exception:
             pass
 
     return airborne_map
@@ -280,10 +280,8 @@ def load_live_statuses(d):
         return data
     return {}
 
-# LƯU CỘNG DỒN TỪNG BƯỚC CHO NGĂN 1 (daily_schedules - VIAGS)
-def merge_and_save_viags_section(d, section_flights, tz_vn):
-    if not section_flights:
-        return
+# CẬP NHẬT TỪNG MỤC VÀ TỰ ĐỘNG THANH LỌC CÁC CHUYẾN BỊ GÁN NHẦM CHIỀU BAY
+def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight_type, tz_vn):
     ref = db.reference(f"daily_schedules/{d}")
     existing_data = ref.get()
     existing_list = []
@@ -292,40 +290,33 @@ def merge_and_save_viags_section(d, section_flights, tz_vn):
 
     live_status_map = load_live_statuses(d)
 
-    merged_map = {}
-    for item in existing_list:
-        if isinstance(item, dict) and item.get("flight_no"):
-            k = f"{item.get('direction')}_{item.get('flight_type')}_{item.get('flight_no')}"
-            merged_map[k] = item
+    # 1. Giữ lại các chuyến của các mục KHÁC (Xóa sạch dữ liệu cũ của mục này để không bao giờ bị dính chuyến nhầm chiều)
+    preserved_list = [
+        f for f in existing_list 
+        if not (f.get("direction") == sec_direction and f.get("flight_type") == sec_flight_type)
+    ]
 
-    for new_item in section_flights:
-        f_no = (new_item.get("flight_no") or "").replace(" ", "").upper()
-        k = f"{new_item.get('direction')}_{new_item.get('flight_type')}_{f_no}"
-        direction = (new_item.get("direction") or "").upper()
-
+    # 2. Xử lý các chuyến bay mới của mục này
+    cleaned_new_flights = []
+    for f in section_flights:
+        f_no = (f.get("flight_no") or "").replace(" ", "").upper()
+        # Áp dụng khóa trạng thái Departed / Landed nếu đã có
         prior_status = live_status_map.get(f_no)
         if prior_status:
-            if direction == "DEPARTURE" and "DEPARTED" in prior_status.upper():
-                new_item["remarks"] = prior_status
-            elif direction == "ARRIVAL" and "LANDED" in prior_status.upper():
-                new_item["remarks"] = prior_status
+            if sec_direction == "Departure" and "DEPARTED" in prior_status.upper():
+                f["remarks"] = prior_status
+            elif sec_direction == "Arrival" and "LANDED" in prior_status.upper():
+                f["remarks"] = prior_status
+        cleaned_new_flights.append(f)
 
-        if k in merged_map:
-            old_rem = (merged_map[k].get("remarks") or "").strip().upper()
-            if direction == "DEPARTURE" and "DEPARTED" in old_rem:
-                new_item["remarks"] = merged_map[k].get("remarks")
-            elif direction == "ARRIVAL" and "LANDED" in old_rem:
-                new_item["remarks"] = merged_map[k].get("remarks")
-
-        merged_map[k] = new_item
-
-    merged_list = list(merged_map.values())
+    # 3. Hợp nhất lại danh sách hoàn toàn sạch sẽ
+    final_list = preserved_list + cleaned_new_flights
     ref.set({
         "date": d,
-        "flights": merged_list,
+        "flights": final_list,
         "updated_at": datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
     })
-    print(f"   💾 [LƯU CỘNG DỒN VIAGS] Ngày {d}: Đã hợp nhất tổng cộng {len(merged_list)} chuyến bay.")
+    print(f"   💾 [LƯU VÀ THANH LỌC] Ngày {d} ({sec_direction} - {sec_flight_type}): Đã làm mới {len(cleaned_new_flights)} chuyến, tổng cộng kho có {len(final_list)} chuyến.")
 
 def cleanup_old_data(now_vn):
     cutoff_date = (now_vn - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -422,7 +413,6 @@ def scrape_viags():
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     now_vn = datetime.now(tz_vn)
 
-    # ĐỊNH NGHĨA 3 NGÀY LIÊN TIẾP: HÔM NAY (D), NGÀY MAI (D+1), NGÀY MỐT (D+2)
     today_str = now_vn.strftime("%Y-%m-%d")
     tomorrow_str = (now_vn + timedelta(days=1)).strftime("%Y-%m-%d")
     day_after_str = (now_vn + timedelta(days=2)).strftime("%Y-%m-%d")
@@ -445,19 +435,16 @@ def scrape_viags():
         scrape_dates = [today_str]
         max_load_clicks = 6
     elif scrape_mode == "today_only":
-        # Nút Cập nhật hôm nay: Cào cả 3 ngày nếu ngày mốt (D+2) chưa có để đủ chu kỳ
         if not load_day_flights(day_after_str):
             scrape_dates = [today_str, tomorrow_str, day_after_str]
-            print(f">>> [PHẦN MỀM CHÍNH]: Cào cả 3 ngày D ({today_str}), D+1 ({tomorrow_str}), D+2 ({day_after_str}) để đủ chu kỳ <<<")
         else:
             scrape_dates = [today_str]
-            print(f">>> [PHẦN MỀM CHÍNH]: Quét ngày hôm nay {today_str} <<<")
         max_load_clicks = 25
+        print(f">>> [PHẦN MỀM CHÍNH]: Quét ngày hôm nay {today_str} <<<")
     else:
-        # Chạy tự động hoặc both_days: Luôn quét đủ cả 3 ngày D, D+1, D+2
         scrape_dates = [today_str, tomorrow_str, day_after_str]
         max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét trọn vẹn 3 ngày: D ({today_str}), D+1 ({tomorrow_str}), D+2 ({day_after_str}) <<<")
+        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét 3 ngày ({scrape_dates}) <<<")
         if scrape_mode == "scheduled_auto":
             run_fr24_cumulative_update(target_dates, now_vn)
             cleanup_old_data(now_vn)
@@ -517,6 +504,21 @@ def scrape_viags():
 
                         if sec["trip"] != "D":
                             select_and_wait(page, SEL_TRIP, sec["trip"])
+
+                        # KHÓA KIỂM TRA CHÉO 2 LỚP: ĐẢM BẢO BẢNG ĐÃ CHUYỂN ĐÚNG CHIỀU ĐI / ĐẾN
+                        for check_i in range(3):
+                            headers_check = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
+                            
+                            # Nếu cần cào Chiều Đến mà bảng vẫn hiện Destination (Chiều Đi) -> Ép chuyển lại!
+                            if sec["d_type"] == "Arrival" and ("destination" in headers_check) and ("from" not in headers_check):
+                                print("   [CẢNH BÁO] Bảng chưa chuyển sang Chiều Đến, đang ép chọn lại Trip = 'A'...")
+                                select_and_wait(page, SEL_TRIP, "A")
+                            # Nếu cần cào Chiều Đi mà bảng vẫn hiện From (Chiều Đến) -> Ép chuyển lại!
+                            elif sec["d_type"] == "Departure" and ("from" in headers_check) and ("destination" not in headers_check):
+                                print("   [CẢNH BÁO] Bảng chưa chuyển sang Chiều Đi, đang ép chọn lại Trip = 'D'...")
+                                select_and_wait(page, SEL_TRIP, "D")
+                            else:
+                                break
 
                         load_count = 0
                         while True:
@@ -583,16 +585,6 @@ def scrape_viags():
                                 if not remarks:
                                     remarks = "Normal"
 
-                                direction_upper = sec["d_type"].upper()
-
-                                # KHÓA VĨNH VIỄN CHUYẾN ĐÃ DEPARTED / LANDED
-                                existing_status = current_live_statuses.get(flight_no)
-                                if existing_status:
-                                    if direction_upper == "DEPARTURE" and "DEPARTED" in existing_status.upper():
-                                        remarks = existing_status
-                                    elif direction_upper == "ARRIVAL" and "LANDED" in existing_status.upper():
-                                        remarks = existing_status
-
                                 if is_status_only and current_date == today_str:
                                     if remarks != "Normal" or flight_no not in current_live_statuses:
                                         status_updates_for_live[flight_no] = remarks
@@ -615,7 +607,8 @@ def scrape_viags():
                                 }
                                 section_flights.append(flight_item)
 
-                        merge_and_save_viags_section(current_date, section_flights, tz_vn)
+                        # CẬP NHẬT & THANH LỌC RIÊNG CHO MỤC NÀY
+                        update_section_flights_cleanly(current_date, section_flights, sec["d_type"], sec["f_type"], tz_vn)
 
                         if is_status_only and status_updates_for_live:
                             live_status_ref.update(status_updates_for_live)
@@ -632,7 +625,7 @@ def scrape_viags():
 
         browser.close()
 
-    print("=== ĐÃ HOÀN TẤT CẬP NHẬT CỘNG DỒN TOÀN BỘ 3 NGÀY THÀNH CÔNG! ===")
+    print("=== ĐÃ HOÀN TẤT CẬP NHẬT & THANH LỌC SẠCH SẼ DỮ LIỆU! ===")
 
 if __name__ == "__main__":
     scrape_viags()
