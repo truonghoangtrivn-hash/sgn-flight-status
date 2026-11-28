@@ -1,654 +1,873 @@
-import json
-import os
-import re
-import time
-import urllib.request
-from datetime import datetime, timedelta
-import pytz
-from playwright.sync_api import sync_playwright
-import firebase_admin
-from firebase_admin import credentials, db
-
-# Đường dẫn Realtime Database
-RTDB_URL = "https://sgn-flight-status-default-rtdb.asia-southeast1.firebasedatabase.app"
-
-# 1. Khởi tạo kết nối Firebase Realtime Database
-def init_firebase():
-    sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-    if not sa_json:
-        raise ValueError("Thiếu biến môi trường FIREBASE_SERVICE_ACCOUNT!")
-    cred_dict = json.loads(sa_json)
-    cred = credentials.Certificate(cred_dict)
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred, {
-            "databaseURL": RTDB_URL
-        })
-
-# Kiểm tra chéo: Giờ dự đáp (ETA) không thể sớm hơn giờ kế hoạch (STA) quá 45 phút
-def is_valid_arrival_eta(eta_str, sta_str):
-    if not eta_str or eta_str == "--" or not sta_str or sta_str == "--:--":
-        return False
-    try:
-        eh, em = map(int, eta_str.split(":"))
-        sh, sm = map(int, sta_str.split(":"))
-        eta_mins = eh * 60 + em
-        sta_mins = sh * 60 + sm
-        diff = eta_mins - sta_mins
-        if diff < -720:
-            diff += 1440
-        elif diff > 720:
-            diff -= 1440
-        return diff >= -45
-    except Exception:
-        return True
-
-# TẦNG 1A: Quét bản đồ bầu trời
-def get_airborne_flights_to_sgn():
-    airborne_map = {}
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://www.flightradar24.com",
-        "Referer": "https://www.flightradar24.com/"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SGN Flight Monitor - Vietnam Airlines (SGN/VVTS)</title>
+  <!-- Tailwind CSS & FontAwesome Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['Chakra Petch', 'monospace'],
+          },
+          colors: {
+            vna: {
+              blue: '#005574',
+              dark: '#002d42',
+              navy: '#001e2e',
+              gold: '#e2b343',
+              goldLight: '#f5c862',
+              cream: '#fdfbf7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Hiệu ứng thở êm dịu màu Vàng Hoa Sen VNA cho hàng BOARDING */
+    @keyframes vnaLotusGlow {
+      0%, 100% {
+        background-color: rgba(226, 179, 67, 0.12);
+      }
+      50% {
+        background-color: rgba(226, 179, 67, 0.28);
+      }
+    }
+    .vna-boarding-row {
+      animation: vnaLotusGlow 1.8s ease-in-out infinite;
+      border-left: 3px solid #e2b343 !important;
     }
 
-    base_params = "faa=1&satellite=1&mlat=1&flarm=1&adsb=1&gnd=0&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1&stats=0&limit=5000"
-    feed_urls = [
-        f"https://data-cloud.flightradar24.com/zones/fcgi/feed.js?{base_params}&to=SGN",
-        f"https://data-cloud.flightradar24.com/zones/fcgi/feed.js?{base_params}&airline=HVN"
-    ]
+    /* Thanh cuộn mượt mà */
+    .custom-table-scroll::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .custom-table-scroll::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .custom-table-scroll::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 font-sans antialiased selection:bg-vna-gold selection:text-vna-dark">
 
-    for url in feed_urls:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    for f_id, info in data.items():
-                        if not isinstance(info, list) or len(info) < 15:
-                            continue
-                        dest = str(info[12] or "").upper().strip()
-                        on_ground = info[14]
-                        altitude = info[4] if isinstance(info[4], (int, float)) else 0
+  <!-- KHUNG ĐẦU TRANG GHIM CỐ ĐỊNH -->
+  <div class="sticky top-0 z-50 shadow-md">
+    
+    <!-- 1. Header chính -->
+    <header class="bg-vna-dark text-white border-b-2 border-vna-gold px-3 py-2 sm:px-6 sm:py-2.5">
+      <div class="max-w-7xl mx-auto flex items-center justify-between">
+        <div class="flex items-center space-x-2 sm:space-x-3">
+          <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-vna-navy border border-vna-gold/40 flex items-center justify-center shadow-inner">
+            <i class="fa-solid fa-plane-departure text-vna-gold text-sm sm:text-base"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-1.5">
+              <h1 class="text-base sm:text-xl font-bold tracking-tight text-white font-mono leading-none">SGN MONITOR</h1>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-vna-gold text-vna-dark font-mono">VNA</span>
+            </div>
+            <p class="text-[10px] sm:text-xs text-sky-200 font-medium leading-tight mt-0.5">Tan Son Nhat (SGN/VVTS)</p>
+          </div>
+        </div>
+        
+        <!-- Cụm nút SYNC NOW & AUTO: ON -->
+        <div class="flex items-center space-x-2">
+          <button id="btnSyncNow" onclick="triggerSyncNow()" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-xs cursor-pointer font-mono">
+            <i id="syncIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
+            <span id="syncText">SYNC</span>
+          </button>
 
-                        if on_ground == 1 and altitude <= 0:
-                            continue
-                        if dest and dest != "SGN":
-                            continue
+          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Toggle Auto-Pilot" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
+            <span id="autoPilotDot" class="w-2 h-2 mr-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+            <span id="autoPilotText">AUTO</span>
+          </button>
+        </div>
+      </div>
+    </header>
 
-                        iata_no = str(info[13] or "").upper().replace(" ", "").strip()
-                        callsign = str(info[16] or "").upper().replace(" ", "").strip()
+    <!-- 2. Thanh điều khiển Bộ lọc -->
+    <div class="bg-white/95 backdrop-blur border-b border-slate-200 px-3 py-2 sm:px-6 sm:py-2.5">
+      <div class="max-w-7xl mx-auto">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 items-center">
+          
+          <!-- Ô 1: DATE -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-regular fa-calendar-days text-vna-blue mr-0.5"></i> DATE:
+            </label>
+            <input type="date" id="datePicker" class="w-full h-8 sm:h-9 px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:border-vna-blue shadow-2xs">
+          </div>
 
-                        vn_no = ""
-                        if iata_no.startswith("VN"):
-                            vn_no = iata_no
-                        elif callsign.startswith("HVN"):
-                            vn_no = callsign.replace("HVN", "VN", 1)
+          <!-- Ô 2: SEARCH -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-magnifying-glass text-vna-blue mr-0.5"></i> FIND:
+            </label>
+            <input type="text" id="searchInput" placeholder="VN205, DAD..." class="w-full h-8 sm:h-9 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-vna-blue shadow-2xs">
+          </div>
 
-                        if vn_no:
-                            airborne_map[vn_no] = f_id
-        except Exception:
-            pass
+          <!-- Ô 3: TYPE: DOM | INTL -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-globe text-vna-blue mr-0.5"></i> TYPE:
+            </label>
+            <div class="grid grid-cols-2 gap-1 w-full h-8 sm:h-9 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs font-mono">DOM</button>
+              <button onclick="setType('International')" id="btn-type-International" class="type-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white font-mono">INTL</button>
+            </div>
+          </div>
 
-    return airborne_map
+          <!-- Ô 4: BOUND: DEP | ARR -->
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 font-mono mb-1">
+              <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-0.5"></i> BOUND:
+            </label>
+            <div class="grid grid-cols-2 gap-1 w-full h-8 sm:h-9 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs font-mono">DEP</button>
+              <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white font-mono">ARR</button>
+            </div>
+          </div>
 
-# TẦNG 1B: Kiểm tra qua cổng Tìm Kiếm LIVE FLIGHTS của Flightradar24
-def find_live_flight_id_via_search(flight_no):
-    clean_no = flight_no.replace(" ", "").upper()
-    callsign_no = clean_no.replace("VN", "HVN", 1) if clean_no.startswith("VN") else clean_no
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://www.flightradar24.com",
-        "Referer": "https://www.flightradar24.com/"
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-1 sm:px-6 py-1.5 sm:py-3">
+
+    <!-- Thống kê nhanh FIDS -->
+    <div class="flex items-center justify-between mb-1.5 px-1 font-mono text-[10px] sm:text-xs">
+      <div class="text-slate-600 font-semibold">
+        <span>SHOWING: <strong id="flightCount" class="text-vna-blue font-bold text-xs sm:text-sm">0</strong> FLIGHTS</span>
+      </div>
+      <div id="loadingStatus" class="text-sky-700 font-semibold flex items-center">
+        <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> SYNCING...
+      </div>
+    </div>
+
+    <!-- BẢNG DANH SÁCH CHUYẾN BAY -->
+    <div class="bg-white rounded-lg sm:rounded-2xl shadow-sm border border-slate-300 overflow-hidden">
+      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-190px)] custom-table-scroll">
+        <table class="w-full text-left border-collapse">
+          <thead id="flightsTableHead">
+            <!-- Header chuẩn VNA Navy & Gold, ghim cố định trên đỉnh bảng -->
+          </thead>
+          <tbody id="flightsTableBody" class="text-xs">
+            <!-- Render dữ liệu -->
+          </tbody>
+        </table>
+      </div>
+      <div id="emptyMessage" class="hidden p-8 text-center text-slate-400 font-mono">
+        <i class="fa-solid fa-plane-slash text-2xl mb-2 text-slate-300"></i>
+        <p class="font-bold text-xs">NO MATCHING FLIGHTS FOUND.</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Firebase Realtime Database Web SDK & VNA Heritage Logic -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCg4sWBwEwhgaIrNMKVPfCNN7mastS_Kko",
+      authDomain: "sgn-flight-status.firebaseapp.com",
+      databaseURL: "https://sgn-flight-status-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "sgn-flight-status",
+      storageBucket: "sgn-flight-status.firebasestorage.app",
+      messagingSenderId: "141073829827",
+      appId: "1:141073829827:web:6c61bce7519e300b727776"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const rtdb = getDatabase(app);
+
+    // TỪ ĐIỂN MÃ SÂN BAY IATA 3 CHỮ
+    const AIRPORT_IATA_MAP = {
+      "HA NOI": "HAN", "HANOI": "HAN", "HAN": "HAN",
+      "DA NANG": "DAD", "DANANG": "DAD", "DAD": "DAD",
+      "NHA TRANG": "CXR", "CAM RANH": "CXR", "CXR": "CXR",
+      "HAI PHONG": "HPH", "HAIPHONG": "HPH", "CAT BI": "HPH", "HPH": "HPH",
+      "VINH": "VII", "VII": "VII",
+      "HUE": "HUI", "PHU BAI": "HUI", "HUI": "HUI",
+      "PHU QUOC": "PQC", "PHUQUOC": "PQC", "PQC": "PQC",
+      "CAN THO": "VCA", "CANTHO": "VCA", "VCA": "VCA",
+      "DA LAT": "DLI", "DALAT": "DLI", "LIEN KHUONG": "DLI", "DLI": "DLI",
+      "BUON ME THUOT": "BMV", "BUON MA THUOT": "BMV", "BMV": "BMV",
+      "PLEIKU": "PXU", "PXU": "PXU",
+      "QUY NHON": "UIH", "PHU CAT": "UIH", "UIH": "UIH",
+      "THANH HOA": "THD", "THO XUAN": "THD", "THD": "THD",
+      "DONG HOI": "VDH", "VDH": "VDH",
+      "CHU LAI": "VCL", "VCL": "VCL",
+      "TUY HOA": "TBB", "TBB": "TBB",
+      "CON DAO": "VCS", "CONDAO": "VCS", "VCS": "VCS",
+      "CA MAU": "CAH", "CAH": "CAH",
+      "RACH GIA": "VKG", "VKG": "VKG",
+      "DIEN BIEN": "DIN", "DIN": "DIN",
+      "VAN DON": "VDO", "QUANG NINH": "VDO", "VDO": "VDO",
+      "TOKYO": "NRT", "NARITA": "NRT", "HANEDA": "HND", "NRT": "NRT", "HND": "HND",
+      "OSAKA": "KIX", "KANSAI": "KIX", "KIX": "KIX",
+      "NAGOYA": "NGO", "NGO": "NGO",
+      "FUKUOKA": "FUK", "FUK": "FUK",
+      "SEOUL": "ICN", "INCHEON": "ICN", "ICN": "ICN",
+      "BUSAN": "PUS", "PUS": "PUS",
+      "BANGKOK": "BKK", "SUVARNABHUMI": "BKK", "BKK": "BKK",
+      "SINGAPORE": "SIN", "CHANGI": "SIN", "SIN": "SIN",
+      "KUALA LUMPUR": "KUL", "KUL": "KUL",
+      "MANILA": "MNL", "MNL": "MNL",
+      "JAKARTA": "CGK", "CGK": "CGK",
+      "DENPASAR": "DPS", "BALI": "DPS", "DPS": "DPS",
+      "PHUKET": "HKT", "HKT": "HKT",
+      "PHNOM PENH": "PNH", "PNH": "PNH", "PHNOM PENH TECHO": "PNH",
+      "SIEM RIEP": "SAI", "SIEM REAP": "SAI", "SAI": "SAI", "REP": "SAI",
+      "VIENTIANE": "VTE", "VTE": "VTE",
+      "LUANG PRABANG": "LPQ", "LPQ": "LPQ",
+      "YANGON": "RGN", "RGN": "RGN",
+      "TAIPEI": "TPE", "TAIPEI. TAOYUAN": "TPE", "TPE": "TPE",
+      "KAOHSIUNG": "KHH", "KHH": "KHH",
+      "HONG KONG": "HKG", "HONGKONG": "HKG", "HKG": "HKG",
+      "GUANGZHOU": "CAN", "CAN": "CAN",
+      "SHANGHAI": "PVG", "PU DONG-SHANGHAI": "PVG", "PVG": "PVG",
+      "BEIJING": "PKX", "DAXING, BEIJING": "PKX", "PKX": "PKX", "PEK": "PEK",
+      "PARIS": "CDG", "CDG": "CDG",
+      "FRANKFURT": "FRA", "FRA": "FRA",
+      "LONDON": "LHR", "LHR": "LHR",
+      "MUENCHEN": "MUC", "MUNICH": "MUC", "MUC": "MUC",
+      "SAN FRANCISCO": "SFO", "SFO": "SFO",
+      "SYDNEY": "SYD", "SYD": "SYD",
+      "MELBOURNE": "MEL", "MEL": "MEL",
+      "PERTH": "PER", "PER": "PER",
+      "DELHI": "DEL", "DEL": "DEL",
+      "BOMBAY": "BOM", "MUMBAI": "BOM", "BOM": "BOM",
+      "HYDERABAD": "HYD", "HYD": "HYD",
+      "COLOMBO": "CMB", "CMB": "CMB",
+      "COPENHAGEN": "CPH", "CPH": "CPH"
+    };
+
+    function formatAirportWithIATA(rawCity) {
+      if (!rawCity || rawCity === '--') return '--';
+      const cleanUpper = rawCity.trim().toUpperCase();
+
+      let iataCode = '';
+      for (const [key, code] of Object.entries(AIRPORT_IATA_MAP)) {
+        if (cleanUpper === key || cleanUpper.includes(key)) {
+          iataCode = code;
+          break;
+        }
+      }
+
+      if (iataCode) {
+        return `
+          <span class="hidden sm:inline">${rawCity} (${iataCode})</span>
+          <span class="sm:hidden font-mono font-bold tracking-wider text-vna-dark">${iataCode}</span>
+        `;
+      }
+      return rawCity;
     }
 
-    for q in [clean_no, callsign_no]:
-        try:
-            url = f"https://www.flightradar24.com/v1/search/web/find?query={q}&limit=15"
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    for item in data.get("results", []):
-                        if item.get("type") == "live":
-                            detail = item.get("detail", {})
-                            schd_to = (detail.get("schd_to") or "").upper().strip()
-                            f_code = (detail.get("flight") or "").upper().replace(" ", "").strip()
-                            cs_code = (detail.get("callsign") or "").upper().replace(" ", "").strip()
-                            label = (item.get("label") or "").upper().replace(" ", "").strip()
+    let currentType = localStorage.getItem('vna_selected_type') || 'Domestic';
+    let currentDirection = localStorage.getItem('vna_selected_bound') || 'Departure';
+    let autoPilotEnabled = localStorage.getItem('vna_autopilot_enabled') !== 'false';
+    let rememberedSearch = localStorage.getItem('vna_search_query') || '';
+    
+    let rawFlights = [];
+    let selectedDate = '';
+    let nextDateStr = '';
 
-                            if (not schd_to or schd_to == "SGN") and (f_code == clean_no or cs_code == callsign_no or clean_no in label or callsign_no in label):
-                                return item.get("id")
-        except Exception:
-            pass
-    return None
+    let isSyncingNow = false;
+    let isTodayUpdating = false;
+    let isFR24Updating = false;
+    let isStatusUpdating = false;
 
-# Lấy chính xác GIỜ DỰ ĐÁP (ETA) qua flight_id
-def fetch_airborne_eta_by_id(flight_id, flight_no):
-    tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://www.flightradar24.com",
-        "Referer": "https://www.flightradar24.com/"
+    let unsubViags1 = null;
+    let unsubViags2 = null;
+    let flightsDay1 = [];
+    let flightsDay2 = [];
+
+    let unsubFr24_1 = null;
+    let unsubFr24_2 = null;
+    let fr24MapDay1 = {};
+    let fr24MapDay2 = {};
+
+    let unsubStatus1 = null;
+    let unsubStatus2 = null;
+    let liveStatusMapDay1 = {};
+    let liveStatusMapDay2 = {};
+
+    const datePicker = document.getElementById('datePicker');
+    const searchInput = document.getElementById('searchInput');
+    const now = new Date();
+    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    
+    const rememberedDate = localStorage.getItem('vna_selected_date') || todayStr;
+    datePicker.value = rememberedDate;
+    searchInput.value = rememberedSearch;
+
+    function updateButtonUI() {
+      document.querySelectorAll('.type-btn').forEach(b => {
+        b.className = 'type-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white cursor-pointer font-mono';
+      });
+      const activeTypeBtn = document.getElementById(`btn-type-${currentType}`);
+      if (activeTypeBtn) {
+        activeTypeBtn.className = 'type-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
+      }
+
+      document.querySelectorAll('.dir-btn').forEach(b => {
+        b.className = 'dir-btn flex items-center justify-center text-xs font-bold rounded-md transition text-slate-600 hover:bg-white cursor-pointer font-mono';
+      });
+      const activeDirBtn = document.getElementById(`btn-dir-${currentDirection}`);
+      if (activeDirBtn) {
+        activeDirBtn.className = 'dir-btn flex items-center justify-center text-xs font-bold rounded-md transition bg-vna-blue text-white shadow-xs cursor-pointer font-mono';
+      }
     }
 
-    try:
-        url = f"https://data-live.flightradar24.com/clickhandler/?version=1.5&flight={flight_id}"
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8"))
-                dest = (data.get("airport", {}).get("destination", {}).get("code", {}).get("iata") or "").upper()
-                if dest != "SGN":
-                    return "--", None
-
-                status_obj = data.get("status", {})
-                raw_status_text = (status_obj.get("text") or "").strip()
-                status_upper = raw_status_text.upper()
-
-                time_info = data.get("time", {})
-                real_arr = time_info.get("real", {}).get("arrival")
-                est_arr = time_info.get("estimated", {}).get("arrival")
-                sched_arr = time_info.get("scheduled", {}).get("arrival")
-
-                if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
-                    return "--", None
-
-                arr_dt = None
-                if sched_arr:
-                    arr_dt = datetime.fromtimestamp(sched_arr, tz_vn)
-                elif est_arr:
-                    arr_dt = datetime.fromtimestamp(est_arr, tz_vn)
-
-                if est_arr:
-                    dt = datetime.fromtimestamp(est_arr, tz_vn)
-                    return dt.strftime("%H:%M"), arr_dt
-
-                if "ESTIMATED ARRIVAL" in status_upper:
-                    match_arr = re.search(r"estimated\s+arrival\s*[:\s•]*(\d{1,2}:\d{2}\s*(?:AM|PM)?)", raw_status_text, re.I)
-                    if match_arr:
-                        t_str = match_arr.group(1).strip()
-                        try:
-                            t_obj = datetime.strptime(t_str, "%I:%M %p")
-                            return t_obj.strftime("%H:%M"), arr_dt
-                        except Exception:
-                            return t_str, arr_dt
-    except Exception:
-        pass
-
-    return "--", None
-
-# TẦNG 3: Kiểm tra qua cổng list.json
-def fetch_live_eta_via_list_api(flight_no):
-    clean_no = flight_no.replace(" ", "").upper()
-    callsign_no = clean_no.replace("VN", "HVN", 1) if clean_no.startswith("VN") else clean_no
-    tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://www.flightradar24.com",
-        "Referer": "https://www.flightradar24.com/"
+    function calculateNextDate(dateStr) {
+      const parts = dateStr.split('-');
+      const d = new Date(parts[0], parts[1] - 1, parts[2]);
+      d.setDate(d.getDate() + 1);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    for q in [clean_no, callsign_no]:
-        try:
-            url = f"https://api.flightradar24.com/common/v1/flight/list.json?query={q}&fetchBy=flight&page=1&limit=5"
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    for item in data.get("result", {}).get("response", {}).get("data", []):
-                        dest = (item.get("airport", {}).get("destination", {}).get("code", {}).get("iata") or "").upper()
-                        if dest != "SGN":
-                            continue
-
-                        status_obj = item.get("status", {})
-                        is_live = bool(status_obj.get("live", False))
-                        raw_status = (status_obj.get("text") or "").strip()
-                        status_upper = raw_status.upper()
-
-                        time_info = item.get("time", {})
-                        real_dep = time_info.get("real", {}).get("departure")
-                        real_arr = time_info.get("real", {}).get("arrival")
-                        est_arr = time_info.get("estimated", {}).get("arrival")
-                        sched_arr = time_info.get("scheduled", {}).get("arrival")
-
-                        if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
-                            continue
-
-                        if not (is_live or (real_dep is not None and real_arr is None) or "ESTIMATED ARRIVAL" in status_upper):
-                            continue
-
-                        arr_dt = datetime.fromtimestamp(sched_arr or est_arr, tz_vn) if (sched_arr or est_arr) else None
-
-                        if est_arr:
-                            dt = datetime.fromtimestamp(est_arr, tz_vn)
-                            return dt.strftime("%H:%M"), arr_dt
-
-                        if "ESTIMATED ARRIVAL" in status_upper:
-                            match_arr = re.search(r"estimated\s+arrival\s*[:\s•]*(\d{1,2}:\d{2}\s*(?:AM|PM)?)", raw_status, re.I)
-                            if match_arr:
-                                t_str = match_arr.group(1).strip()
-                                try:
-                                    t_obj = datetime.strptime(t_str, "%I:%M %p")
-                                    return t_obj.strftime("%H:%M"), arr_dt
-                                except Exception:
-                                    return t_str, arr_dt
-        except Exception:
-            pass
-    return "--", None
-
-def is_flight_candidate_for_live_check(f, now_vn):
-    tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
-    f_date = f.get("date", "")
-    sta_str = f.get("scheduled", "")
-    eta_viags_str = f.get("estimated", "")
-    f_type = (f.get("flight_type") or "Domestic").upper()
-
-    candidates = []
-    for t_str in [sta_str, eta_viags_str]:
-        if t_str and t_str != "--:--":
-            try:
-                dt = tz_vn.localize(datetime.strptime(f"{f_date} {t_str}", "%Y-%m-%d %H:%M"))
-                if sta_str and t_str == eta_viags_str and eta_viags_str < sta_str and sta_str >= "20:00" and eta_viags_str <= "05:00":
-                    dt = dt + timedelta(days=1)
-                candidates.append(dt)
-            except Exception:
-                pass
-
-    if not candidates:
-        return False, None
-
-    latest_milestone = max(candidates)
-    max_lookahead_hours = 4.5 if f_type == "DOMESTIC" else 16.0
-    is_eligible = (now_vn - timedelta(hours=4)) <= latest_milestone <= (now_vn + timedelta(hours=max_lookahead_hours))
-    return is_eligible, latest_milestone
-
-def load_day_flights(d):
-    ref = db.reference(f"daily_schedules/{d}")
-    data = ref.get()
-    if data and isinstance(data, dict):
-        return data.get("flights", [])
-    return []
-
-def load_live_statuses(d):
-    ref = db.reference(f"live_statuses/{d}")
-    data = ref.get()
-    if data and isinstance(data, dict):
-        return data
-    return {}
-
-# CẬP NHẬT TỪNG MỤC: CÓ KHÓA BẢO VỆ DANH SÁCH (KHÔNG BAO GIỜ XÓA MẤT CHUYẾN TỐI)
-def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight_type, tz_vn, is_status_only=False):
-    ref = db.reference(f"daily_schedules/{d}")
-    existing_data = ref.get()
-    existing_list = []
-    if existing_data and isinstance(existing_data, dict):
-        existing_list = existing_data.get("flights", [])
-
-    live_status_map = load_live_statuses(d)
-
-    # NẾU LÀ CHẾ ĐỘ STATUS_ONLY: TUYỆT ĐỐI KHÔNG XÓA CHUYẾN NÀO! CHỈ CẬP NHẬT CỘT REMARKS/STATUS
-    if is_status_only:
-        new_status_map = {f.get("flight_no"): f.get("remarks") for f in section_flights if f.get("flight_no")}
-        updated_count = 0
-        for item in existing_list:
-            if item.get("direction") == sec_direction and item.get("flight_type") == sec_flight_type:
-                f_no = item.get("flight_no")
-                old_rem = (item.get("remarks") or "").strip().upper()
-                # Không ghi đè chuyến đã Departed / Landed
-                if sec_direction == "Departure" and "DEPARTED" in old_rem:
-                    continue
-                if sec_direction == "Arrival" and "LANDED" in old_rem:
-                    continue
-                if f_no in new_status_map:
-                    item["remarks"] = new_status_map[f_no]
-                    updated_count += 1
-
-        ref.set({
-            "date": d,
-            "flights": existing_list,
-            "updated_at": datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
-        })
-        print(f"   💾 [STATUS CỘNG DỒN] Ngày {d} ({sec_direction} - {sec_flight_type}): Đã cập nhật trạng thái {updated_count} chuyến, BẢO TOÀN {len(existing_list)} chuyến bay nguyên vẹn!")
-        return
-
-    # NẾU LÀ CÀO ĐẦY ĐỦ (FULL CRAWL): THAY THẾ TOÀN BỘ MỤC NÀY BẰNG DANH SÁCH ĐẦY ĐỦ MỚI
-    preserved_list = [
-        f for f in existing_list 
-        if not (f.get("direction") == sec_direction and f.get("flight_type") == sec_flight_type)
-    ]
-
-    cleaned_new_flights = []
-    for f in section_flights:
-        f_no = (f.get("flight_no") or "").replace(" ", "").upper()
-        prior_status = live_status_map.get(f_no)
-        if prior_status:
-            if sec_direction == "Departure" and "DEPARTED" in prior_status.upper():
-                f["remarks"] = prior_status
-            elif sec_direction == "Arrival" and "LANDED" in prior_status.upper():
-                f["remarks"] = prior_status
-        cleaned_new_flights.append(f)
-
-    final_list = preserved_list + cleaned_new_flights
-    ref.set({
-        "date": d,
-        "flights": final_list,
-        "updated_at": datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
-    })
-    print(f"   💾 [LƯU ĐẦY ĐỦ] Ngày {d} ({sec_direction} - {sec_flight_type}): Đã làm mới {len(cleaned_new_flights)} chuyến, tổng cộng kho có {len(final_list)} chuyến.")
-
-def cleanup_old_data(now_vn):
-    cutoff_date = (now_vn - timedelta(days=7)).strftime("%Y-%m-%d")
-    for branch in ["daily_schedules", "fr24_etas", "live_statuses"]:
-        try:
-            ref = db.reference(branch)
-            all_keys = ref.get(shallow=True)
-            if isinstance(all_keys, dict):
-                for date_key in list(all_keys.keys()):
-                    if date_key < cutoff_date:
-                        db.reference(f"{branch}/{date_key}").delete()
-                        print(f"🧹 [DỌN DẸP TỰ ĐỘNG]: Đã xóa dữ liệu cũ {branch}/{date_key}")
-        except Exception:
-            pass
-
-# HÀM QUÉT ĐỘC LẬP 3 TẦNG FLIGHTRADAR24
-def run_fr24_cumulative_update(target_dates, now_vn):
-    print(f"\n=======================================================")
-    print(f" >>> QUÉT 3 TẦNG MỌI CHUYẾN BAY ĐANG LIVE TRÊN FR24 <<<")
-    print(f" Thời điểm quét (VN): {now_vn.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"=======================================================")
-
-    airborne_map = get_airborne_flights_to_sgn()
-    print(f"✓ [TẦNG 1 - BẦU TRỜI]: Phát hiện {len(airborne_map)} máy bay đang bay: {list(airborne_map.keys())}")
-
-    fast_live_cache = {}
-    for f_no, f_id in airborne_map.items():
-        eta_val, arr_dt = fetch_airborne_eta_by_id(f_id, f_no)
-        if eta_val and eta_val != "--":
-            fast_live_cache[f_no] = (eta_val, arr_dt)
-            print(f"   ⚡ [TẦNG 1 LIVE] {f_no} -> ETA: {eta_val}")
-        time.sleep(0.15)
-
-    for d in target_dates:
-        flights_list = load_day_flights(d)
-        if not flights_list:
-            continue
-
-        fr24_ref = db.reference(f"fr24_etas/{d}")
-        updated_count = 0
-
-        for f in flights_list:
-            if f.get("direction") == "Arrival":
-                f_no = f.get("flight_no", "").replace(" ", "").upper()
-                sta_str = f.get("scheduled", "--:--")
-                rem_upper = (f.get("remarks") or "").upper()
-
-                if "LANDED" in rem_upper or "ARRIVED" in rem_upper:
-                    continue
-
-                is_eligible, f_milestone_dt = is_flight_candidate_for_live_check(f, now_vn)
-                if not is_eligible:
-                    continue
-
-                eta_val = "--"
-                live_arr_dt = None
-
-                if f_no in fast_live_cache:
-                    eta_val, live_arr_dt = fast_live_cache[f_no]
-
-                if eta_val == "--":
-                    live_f_id = find_live_flight_id_via_search(f_no)
-                    if live_f_id:
-                        eta_val, live_arr_dt = fetch_airborne_eta_by_id(live_f_id, f_no)
-                    time.sleep(0.15)
-
-                if eta_val == "--":
-                    eta_val, live_arr_dt = fetch_live_eta_via_list_api(f_no)
-                    time.sleep(0.15)
-
-                if eta_val and eta_val != "--" and is_valid_arrival_eta(eta_val, sta_str):
-                    if live_arr_dt and f_milestone_dt:
-                        if abs((live_arr_dt - f_milestone_dt).total_seconds()) > 10 * 3600:
-                            continue
-
-                    fr24_ref.update({f_no: eta_val})
-                    updated_count += 1
-                    print(f"   ✈️ [LƯU CỘNG DỒN FR24 - NGÀY {d}] {f_no} ({f.get('route', '')} | STA {sta_str}) => ETA: {eta_val}")
-
-        print(f"✓ Ngày {d}: Đã lưu cộng dồn {updated_count} chuyến đang LIVE vào ngăn fr24_etas/{d}!")
-
-def select_and_wait(page, selector, value):
-    page.wait_for_selector(selector, state="attached", timeout=25000)
-    try:
-        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
-            page.select_option(selector, value=value)
-        time.sleep(2.5)
-    except Exception:
-        time.sleep(2.5)
-
-# 2. Quy trình chính
-def scrape_viags():
-    init_firebase()
-    tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
-    now_vn = datetime.now(tz_vn)
-
-    today_str = now_vn.strftime("%Y-%m-%d")
-    tomorrow_str = (now_vn + timedelta(days=1)).strftime("%Y-%m-%d")
-    day_after_str = (now_vn + timedelta(days=2)).strftime("%Y-%m-%d")
-    target_dates = [today_str, tomorrow_str, day_after_str]
-
-    scrape_mode = os.environ.get("SCRAPE_MODE", "scheduled_auto")
-
-    # CHẾ ĐỘ 1: CẬP NHẬT RIÊNG FLIGHTRADAR24
-    if scrape_mode == "fr24_only":
-        run_fr24_cumulative_update(target_dates, now_vn)
-        print("=== HOÀN TẤT QUÉT 3 TẦNG FLIGHTRADAR24 ===")
-        return
-
-    # CHẾ ĐỘ 2: CẬP NHẬT RIÊNG STATUS
-    is_status_only = (scrape_mode == "status_only")
-    if is_status_only:
-        print(f"=======================================================")
-        print(f" >>> [CHẾ ĐỘ STATUS SIÊU TỐC 30S]: NGÀY {today_str} <<<")
-        print(f"=======================================================")
-        scrape_dates = [today_str]
-        max_load_clicks = 6
-    elif scrape_mode == "today_only":
-        scrape_dates = [today_str]
-        max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH]: Quét ĐẦY ĐỦ ngày hôm nay {today_str} (bấm 25 lần Load more) <<<")
-    else:
-        scrape_dates = [today_str, tomorrow_str, day_after_str]
-        max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét ĐẦY ĐỦ 3 ngày ({scrape_dates}) <<<")
-        if scrape_mode == "scheduled_auto":
-            run_fr24_cumulative_update(target_dates, now_vn)
-            cleanup_old_data(now_vn)
-
-    live_status_ref = db.reference(f"live_statuses/{today_str}")
-    current_live_statuses = live_status_ref.get()
-    if not isinstance(current_live_statuses, dict):
-        current_live_statuses = {}
-
-    SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
-    SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
-    SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
-    SEL_DATE = "#ctl00_mainContent_ctl00_datetimepicker1"
-
-    sections = [
-        {"name": "QUỐC NỘI - BAY ĐI", "station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
-        {"name": "QUỐC NỘI - BAY ĐẾN", "station": "DOM", "trip": "A", "f_type": "Domestic", "d_type": "Arrival"},
-        {"name": "QUỐC TẾ - BAY ĐI", "station": "INT", "trip": "D", "f_type": "International", "d_type": "Departure"},
-        {"name": "QUỐC TẾ - BAY ĐẾN", "station": "INT", "trip": "A", "f_type": "International", "d_type": "Arrival"}
-    ]
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900}
-        )
-
-        for current_date in scrape_dates:
-            print(f"\n#######################################################")
-            print(f" ####### QUÉT VIAGS NGÀY: {current_date} #######")
-            print(f"#######################################################")
-
-            for sec in sections:
-                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ: {sec['name']} ---")
-
-                for attempt in range(2):
-                    page = context.new_page()
-                    try:
-                        url = "https://www.viags.vn/en-US/flight-schedules"
-                        page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                        page.wait_for_selector(SEL_ORIGIN, state="attached", timeout=25000)
-                        time.sleep(1.5)
-
-                        page.evaluate(f"""(targetDate) => {{
-                            const dateInp = document.querySelector('{SEL_DATE}, [name$="datetimepicker1"]');
-                            if (dateInp && dateInp.value !== targetDate) {{
-                                dateInp.value = targetDate;
-                            }}
-                        }}""", current_date)
-                        time.sleep(0.3)
-
-                        select_and_wait(page, SEL_ORIGIN, "SGN")
-
-                        if sec["station"] != "DOM":
-                            select_and_wait(page, SEL_STATION, sec["station"])
-
-                        if sec["trip"] != "D":
-                            select_and_wait(page, SEL_TRIP, sec["trip"])
-
-                        # Khóa kiểm tra chéo 2 lớp
-                        for check_i in range(3):
-                            headers_check = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
-                            if sec["d_type"] == "Arrival" and ("destination" in headers_check) and ("from" not in headers_check):
-                                select_and_wait(page, SEL_TRIP, "A")
-                            elif sec["d_type"] == "Departure" and ("from" in headers_check) and ("destination" not in headers_check):
-                                select_and_wait(page, SEL_TRIP, "D")
-                            else:
-                                break
-
-                        load_count = 0
-                        while True:
-                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            time.sleep(0.8)
-
-                            btn = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
-                            if btn.count() > 0 and btn.first.is_visible():
-                                load_count += 1
-                                try:
-                                    btn.first.scroll_into_view_if_needed()
-                                    btn.first.click(timeout=2500)
-                                    time.sleep(1.8)
-                                except Exception:
-                                    break
-                                if load_count >= max_load_clicks:
-                                    break
-                            else:
-                                break
-
-                        headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
-                        rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
-
-                        section_flights = []
-                        status_updates_for_live = {}
-
-                        for row in rows:
-                            tds = row.locator("td").all()
-                            if not tds or len(tds) < 5:
-                                continue
-
-                            col_map = {}
-                            for idx, td in enumerate(tds):
-                                h_name = headers[idx] if idx < len(headers) else f"col_{idx}"
-                                col_map[h_name] = td.inner_text().strip()
-
-                            row_raw_text = " ".join(col_map.values()).upper()
-                            flight_no = col_map.get("flights", "").replace(" ", "").upper()
-                            airline = col_map.get("airlines", "")
-
-                            is_vna = (
-                                flight_no.startswith("VN") or 
-                                "VIETNAM AIRLINES" in airline.upper() or 
-                                "VIETNAM AIRLINES" in row_raw_text
-                            )
-
-                            if not is_vna:
-                                match_vn = re.search(r'\b(VN\s*\d{2,4})\b', row_raw_text)
-                                if match_vn:
-                                    is_vna = True
-                                    flight_no = match_vn.group(1).replace(" ", "")
-
-                            if is_vna and flight_no:
-                                route = col_map.get("destination", "") if sec["d_type"] == "Departure" else col_map.get("from", "")
-                                gate = col_map.get("gate", "--") if sec["d_type"] == "Departure" else "--"
-                                if not gate:
-                                    gate = "--"
-
-                                belt = col_map.get("baggage belts", col_map.get("belt", "--")) if sec["d_type"] == "Arrival" else "--"
-                                if not belt:
-                                    belt = "--"
-
-                                remarks = col_map.get("remarks", "Normal").strip()
-                                if not remarks:
-                                    remarks = "Normal"
-
-                                direction_upper = sec["d_type"].upper()
-
-                                existing_status = current_live_statuses.get(flight_no)
-                                if existing_status:
-                                    if direction_upper == "DEPARTURE" and "DEPARTED" in existing_status.upper():
-                                        remarks = existing_status
-                                    elif direction_upper == "ARRIVAL" and "LANDED" in existing_status.upper():
-                                        remarks = existing_status
-
-                                if is_status_only and current_date == today_str:
-                                    if remarks != "Normal" or flight_no not in current_live_statuses:
-                                        status_updates_for_live[flight_no] = remarks
-                                        current_live_statuses[flight_no] = remarks
-
-                                flight_item = {
-                                    "date": current_date,
-                                    "scheduled": col_map.get("scheduled", "--:--"),
-                                    "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
-                                    "destination_or_from": route,
-                                    "route": route,
-                                    "airline": "Vietnam Airlines",
-                                    "flight_no": flight_no,
-                                    "gate": gate,
-                                    "belt": belt,
-                                    "remarks": remarks,
-                                    "flight_type": sec["f_type"],
-                                    "direction": sec["d_type"],
-                                    "airport": "SGN"
-                                }
-                                section_flights.append(flight_item)
-
-                        # CẬP NHẬT CÓ BẢO VỆ DANH SÁCH (KHÔNG BAO GIỜ XÓA CHUYẾN TỐI)
-                        update_section_flights_cleanly(current_date, section_flights, sec["d_type"], sec["f_type"], tz_vn, is_status_only=is_status_only)
-
-                        if is_status_only and status_updates_for_live:
-                            live_status_ref.update(status_updates_for_live)
-
-                        print(f"✓ [NGÀY {current_date}] {sec['name']}: Đã tải {len(section_flights)} chuyến.")
-                        page.close()
-                        break
-                    except Exception as ex:
-                        try:
-                            page.close()
-                        except Exception:
-                            pass
-                        time.sleep(2)
-
-        browser.close()
-
-    print("=== ĐÃ HOÀN TẤT CẬP NHẬT CỘNG DỒN TOÀN BỘ HỆ THỐNG! ===")
-
-if __name__ == "__main__":
-    scrape_viags()
+    function listenToFlights(chosenDate) {
+      if (selectedDate !== chosenDate) {
+        fr24MapDay1 = {};
+        fr24MapDay2 = {};
+        liveStatusMapDay1 = {};
+        liveStatusMapDay2 = {};
+      }
+      selectedDate = chosenDate;
+      nextDateStr = calculateNextDate(chosenDate);
+
+      if (unsubViags1) unsubViags1();
+      if (unsubViags2) unsubViags2();
+      if (unsubFr24_1) unsubFr24_1();
+      if (unsubFr24_2) unsubFr24_2();
+      if (unsubStatus1) unsubStatus1();
+      if (unsubStatus2) unsubStatus2();
+
+      document.getElementById('loadingStatus').classList.remove('hidden');
+
+      unsubViags1 = onValue(ref(rtdb, `daily_schedules/${selectedDate}`), (snap1) => {
+        const val1 = snap1.val();
+        flightsDay1 = (val1 && Array.isArray(val1.flights)) ? val1.flights : [];
+        combineAndRender();
+      }, () => {
+        document.getElementById('loadingStatus').classList.add('hidden');
+      });
+
+      unsubViags2 = onValue(ref(rtdb, `daily_schedules/${nextDateStr}`), (snap2) => {
+        const val2 = snap2.val();
+        flightsDay2 = (val2 && Array.isArray(val2.flights)) ? val2.flights : [];
+        combineAndRender();
+      }, () => {});
+
+      unsubFr24_1 = onValue(ref(rtdb, `fr24_etas/${selectedDate}`), (frSnap1) => {
+        fr24MapDay1 = { ...fr24MapDay1, ...(frSnap1.val() || {}) };
+        renderFlights(false);
+      }, () => {});
+
+      unsubFr24_2 = onValue(ref(rtdb, `fr24_etas/${nextDateStr}`), (frSnap2) => {
+        fr24MapDay2 = { ...fr24MapDay2, ...(frSnap2.val() || {}) };
+        renderFlights(false);
+      }, () => {});
+
+      // CHỈ ĐỌC LIVE_STATUSES NẾU LÀ NGÀY HÔM NAY (todayStr)
+      if (selectedDate === todayStr) {
+        unsubStatus1 = onValue(ref(rtdb, `live_statuses/${selectedDate}`), (stSnap1) => {
+          liveStatusMapDay1 = { ...liveStatusMapDay1, ...(stSnap1.val() || {}) };
+          renderFlights(false);
+        }, () => {});
+      } else {
+        liveStatusMapDay1 = {};
+      }
+    }
+
+    function combineAndRender() {
+      rawFlights = [...flightsDay1, ...flightsDay2];
+      document.getElementById('loadingStatus').classList.add('hidden');
+      renderFlights(true);
+    }
+
+    function getIndependentFr24Eta(flightObj) {
+      const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
+      const mapToUse = (flightObj.date === selectedDate) ? fr24MapDay1 : fr24MapDay2;
+      if (mapToUse && mapToUse[fNo] && mapToUse[fNo] !== '--') {
+        return mapToUse[fNo];
+      }
+      return '--';
+    }
+
+    // LẤY TRẠNG THÁI VỚI KHÓA BẢO VỆ THỜI GIAN THỰC (CHẶN ĐỨNG LỖI HIỆN NHẦM LANDED/DEPARTED)
+    function getPriorityStatus(flightObj) {
+      const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
+      const nowDate = new Date();
+      const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
+      const isFutureDate = (flightObj.date > todayStr);
+      const schedTime = flightObj.scheduled || '--:--';
+      const dir = (flightObj.direction || '').toUpperCase();
+
+      let status = flightObj.remarks || 'Normal';
+
+      // 1. Nếu có trong nhánh live_statuses của ngày hôm nay
+      if (flightObj.date === todayStr && liveStatusMapDay1 && liveStatusMapDay1[fNo]) {
+        status = liveStatusMapDay1[fNo];
+      }
+
+      const stUpper = status.toUpperCase();
+
+      // KHÓA BẢO VỆ 1: Ngày mai hoặc ngày mốt -> TUYỆT ĐỐI KHÔNG CÓ DEPARTED HOẶC LANDED!
+      if (isFutureDate) {
+        if (stUpper.includes('DEPARTED') || stUpper.includes('LANDED')) {
+          return (dir === 'DEPARTURE') ? 'Check-in open' : 'Normal';
+        }
+      }
+
+      // KHÓA BẢO VỆ 2: Chuyến bay trong ngày hôm nay nhưng giờ đáp/giờ bay ở tương lai (> currentHHMM)
+      // thì TUYỆT ĐỐI không thể là Landed được!
+      if (flightObj.date === todayStr) {
+        if (schedTime > currentHHMM && stUpper.includes('LANDED')) {
+          return 'Normal';
+        }
+      }
+
+      return status;
+    }
+
+    function formatVnaStatusBadge(statusText) {
+      const originalText = (statusText || 'Normal').trim();
+      const upper = originalText.toUpperCase();
+
+      if (upper.includes('BOARDING')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-amber-100 text-amber-950 border border-amber-400 whitespace-nowrap">${originalText}</span>`;
+      }
+      if (upper.includes('DEPARTED') || upper.includes('LANDED') || upper.includes('ARRIVED')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 whitespace-nowrap">${originalText}</span>`;
+      }
+      if (upper.includes('CHECK-IN')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-300 whitespace-nowrap">${originalText}</span>`;
+      }
+      if (upper.includes('WAITING')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-amber-50/70 text-amber-800 border border-amber-200 whitespace-nowrap">${originalText}</span>`;
+      }
+      if (upper.includes('DELAY')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300 whitespace-nowrap">${originalText}</span>`;
+      }
+      if (upper.includes('LANDING') || upper.includes('APPROACH')) {
+        return `<span class="inline-block px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold bg-sky-100 text-sky-900 border border-sky-400 whitespace-nowrap animate-pulse">${originalText}</span>`;
+      }
+      return `<span class="inline-block px-2 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium text-slate-700 border border-slate-200 whitespace-nowrap">${originalText}</span>`;
+    }
+
+    function renderFlights(shouldCenter = false) {
+      const searchKey = searchInput.value.trim().toUpperCase();
+
+      const filtered = rawFlights.filter(f => {
+        const fNo = (f.flight_no || '').toUpperCase().trim();
+        if (!fNo.startsWith("VN")) return false;
+
+        const currentStatus = getPriorityStatus(f).toUpperCase();
+        if (currentStatus.includes('CANCEL')) {
+          return false;
+        }
+
+        // Ca khai thác: 03:00 D -> 02:59 D+1
+        const sched = f.scheduled || '';
+        if (f.date === selectedDate) {
+          if (sched < '03:00') return false;
+        } else if (f.date === nextDateStr) {
+          if (sched >= '03:00') return false;
+        } else {
+          return false;
+        }
+
+        const fDir = (f.direction || '').toUpperCase();
+        const fType = (f.flight_type || '').toUpperCase();
+
+        const matchDir = (fDir === currentDirection.toUpperCase());
+        const matchType = (fType === currentType.toUpperCase());
+
+        const routeText = (f.route || f.destination_or_from || '').toUpperCase();
+        const iataMatch = AIRPORT_IATA_MAP[routeText] || '';
+        const matchSearch = !searchKey || 
+          fNo.includes(searchKey) ||
+          routeText.includes(searchKey) ||
+          iataMatch.includes(searchKey);
+
+        return matchDir && matchType && matchSearch;
+      });
+
+      // Sắp xếp Scheduled
+      filtered.sort((a, b) => {
+        const prioA = (a.date === selectedDate) ? 0 : 1;
+        const prioB = (b.date === selectedDate) ? 0 : 1;
+        if (prioA !== prioB) return prioA - prioB;
+        return (a.scheduled || '99:99').localeCompare(b.scheduled || '99:99');
+      });
+
+      document.getElementById('flightCount').innerText = filtered.length;
+
+      // CẬP NHẬT HEADER
+      const thead = document.getElementById('flightsTableHead');
+      let headerHtml = '';
+
+      if (currentDirection === 'Departure') {
+        headerHtml = `
+          <tr class="bg-vna-dark text-white uppercase text-[10px] sm:text-xs tracking-wider border-b-2 border-vna-gold font-mono">
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT</th>
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-bold sticky top-0 bg-vna-dark z-20 text-white">DEST</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">STD</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">ETD</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">GATE</th>
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">STATUS</th>
+          </tr>
+        `;
+      } else {
+        headerHtml = `
+          <tr class="bg-vna-dark text-white uppercase text-[10px] sm:text-xs tracking-wider border-b-2 border-vna-gold font-mono">
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT</th>
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-bold sticky top-0 bg-vna-dark z-20 text-white">FROM</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">STA</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">ETA</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">FR24</th>
+            <th class="py-1.5 px-1 sm:py-2.5 sm:px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">BELT</th>
+            <th class="py-1.5 px-2 sm:py-2.5 sm:px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">STATUS</th>
+          </tr>
+        `;
+      }
+      thead.innerHTML = headerHtml;
+
+      // THUẬT TOÁN CANH GIỮA MÀN HÌNH CHUẨN XÁC THEO GIỜ HIỆN TẠI
+      const nowDate = new Date();
+      const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
+      const isLateNight = currentHHMM < '03:00';
+      
+      let targetRowIndex = -1;
+
+      if (currentDirection === 'Arrival') {
+        for (let i = 0; i < filtered.length; i++) {
+          const st = getPriorityStatus(filtered[i]).toUpperCase();
+          if ((st.includes('LANDING') || st.includes('APPROACH') || st.includes('ARRIVING')) && !st.includes('LANDED')) {
+            targetRowIndex = i;
+            break;
+          }
+        }
+        if (targetRowIndex === -1) {
+          for (let i = 0; i < filtered.length; i++) {
+            const st = getPriorityStatus(filtered[i]).toUpperCase();
+            const frEta = getIndependentFr24Eta(filtered[i]);
+            if (!st.includes('LANDED') && frEta && frEta !== '--' && frEta >= currentHHMM) {
+              targetRowIndex = i;
+              break;
+            }
+          }
+        }
+        if (targetRowIndex === -1) {
+          for (let i = 0; i < filtered.length; i++) {
+            const f = filtered[i];
+            const st = getPriorityStatus(f).toUpperCase();
+            const schedTime = f.scheduled || '';
+            if (!st.includes('LANDED')) {
+              if (!isLateNight && f.date === selectedDate && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              } else if (isLateNight && f.date === nextDateStr && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              }
+            }
+          }
+        }
+      } else {
+        for (let i = 0; i < filtered.length; i++) {
+          const st = getPriorityStatus(filtered[i]).toUpperCase();
+          if (st.includes('BOARDING') && !st.includes('DEPARTED')) {
+            targetRowIndex = i;
+            break;
+          }
+        }
+        if (targetRowIndex === -1) {
+          for (let i = 0; i < filtered.length; i++) {
+            const f = filtered[i];
+            const st = getPriorityStatus(f).toUpperCase();
+            const schedTime = f.scheduled || '';
+            if (!st.includes('DEPARTED')) {
+              if (!isLateNight && f.date === selectedDate && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              } else if (isLateNight && f.date === nextDateStr && schedTime >= currentHHMM) {
+                targetRowIndex = i;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (targetRowIndex === -1 && filtered.length > 0) {
+        targetRowIndex = 0;
+      }
+
+      // RENDER DỮ LIỆU BẢNG
+      const tbody = document.getElementById('flightsTableBody');
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '';
+        document.getElementById('emptyMessage').classList.remove('hidden');
+        return;
+      }
+      document.getElementById('emptyMessage').classList.add('hidden');
+
+      let rowsHtml = '';
+      filtered.forEach((f, idx) => {
+        const isNextDayFlight = (f.date === nextDateStr);
+        const isCurrentFocus = (idx === targetRowIndex);
+
+        const finalStatus = getPriorityStatus(f);
+        const remUpper = finalStatus.toUpperCase();
+        const isBoarding = remUpper.includes('BOARDING');
+
+        const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
+        const rawCityName = f.route || f.destination_or_from || '--';
+        const formattedCityHtml = formatAirportWithIATA(rawCityName);
+
+        let trClass = "hover:bg-slate-50/90 transition-colors border-b border-slate-300";
+        if (isBoarding) {
+          trClass = "vna-boarding-row font-medium border-b border-slate-300";
+        } else if (isCurrentFocus) {
+          trClass = "bg-amber-50/60 border-l-4 border-l-vna-gold hover:bg-slate-50 transition border-b border-slate-300";
+        }
+
+        const trId = isCurrentFocus ? 'id="currentFocusFlight"' : '';
+        const timeBadge = isNextDayFlight 
+          ? `<span class="text-[9px] sm:text-[11px] text-sky-600 font-bold ml-0.5 font-mono">(+1)</span>` 
+          : '';
+
+        const independentEta = getIndependentFr24Eta(f);
+        let fr24Cell = '';
+        if (independentEta !== '--') {
+          fr24Cell = `
+            <div class="flex items-center justify-center space-x-1">
+              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-1.5 py-0.2 rounded text-[10px] sm:text-xs border border-sky-300" title="Live ETA from Flightradar24">
+                ${independentEta}
+              </span>
+              <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" title="View on Radar" class="text-yellow-600 hover:text-yellow-700">
+                <i class="fa-solid fa-radar text-[10px] sm:text-xs"></i>
+              </a>
+            </div>
+          `;
+        } else {
+          fr24Cell = `
+            <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-1.5 py-0.5 text-[9px] sm:text-[11px] font-semibold rounded bg-slate-900 text-yellow-400 hover:bg-black font-mono">
+              <i class="fa-solid fa-radar mr-0.5 text-[8px] sm:text-[9px]"></i> RADAR
+            </a>
+          `;
+        }
+
+        const statusBadgeHtml = formatVnaStatusBadge(finalStatus);
+
+        if (currentDirection === 'Departure') {
+          rowsHtml += `
+            <tr ${trId} class="${trClass}">
+              <td class="py-1 px-2 sm:py-2 sm:px-4 font-bold text-vna-blue font-mono whitespace-nowrap">${f.flight_no}</td>
+              <td class="py-1 px-2 sm:py-2 sm:px-4 font-bold text-slate-800 whitespace-nowrap">${formattedCityHtml}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600 font-bold' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center whitespace-nowrap">
+                <span class="px-1.5 py-0.5 bg-slate-100 font-bold font-mono text-[10px] sm:text-xs rounded border border-slate-300">${f.gate || '--'}</span>
+              </td>
+              <td class="py-1 px-2 sm:py-2 sm:px-4 text-center whitespace-nowrap">${statusBadgeHtml}</td>
+            </tr>
+          `;
+        } else {
+          rowsHtml += `
+            <tr ${trId} class="${trClass}">
+              <td class="py-3 px-4 font-bold text-vna-blue font-mono whitespace-nowrap">${f.flight_no}</td>
+              <td class="py-1 px-2 sm:py-2 sm:px-4 font-bold text-slate-800 whitespace-nowrap">${formattedCityHtml}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600 font-bold' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center whitespace-nowrap">${fr24Cell}</td>
+              <td class="py-1 px-1 sm:py-2 sm:px-4 text-center whitespace-nowrap">
+                <span class="px-1.5 py-0.5 bg-slate-100 font-bold font-mono text-[10px] sm:text-xs rounded border border-slate-300">${f.belt || '--'}</span>
+              </td>
+              <td class="py-1 px-2 sm:py-2 sm:px-4 text-center whitespace-nowrap">${statusBadgeHtml}</td>
+            </tr>
+          `;
+        }
+      });
+
+      tbody.innerHTML = rowsHtml;
+
+      if (shouldCenter) {
+        setTimeout(() => {
+          const focusRow = document.getElementById('currentFocusFlight');
+          if (focusRow) {
+            focusRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 280);
+      }
+    }
+
+    datePicker.addEventListener('change', (e) => {
+      localStorage.setItem('vna_selected_date', e.target.value);
+      listenToFlights(e.target.value);
+    });
+
+    searchInput.addEventListener('input', () => {
+      localStorage.setItem('vna_search_query', searchInput.value);
+      renderFlights(false);
+    });
+
+    window.setDirection = (dir) => {
+      if (currentDirection === dir) return;
+      currentDirection = dir;
+      localStorage.setItem('vna_selected_bound', dir);
+      updateButtonUI();
+      renderFlights(true);
+    };
+
+    window.setType = (type) => {
+      if (currentType === type) return;
+      currentType = type;
+      localStorage.setItem('vna_selected_type', type);
+      updateButtonUI();
+      renderFlights(true);
+    };
+
+    // NÚT GOM DUY NHẤT: SYNC NOW
+    window.triggerSyncNow = async () => {
+      const btn = document.getElementById('btnSyncNow');
+      const icon = document.getElementById('syncIcon');
+      const text = document.getElementById('syncText');
+
+      if (btn.disabled || isSyncingNow) return;
+
+      isSyncingNow = true;
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      icon.classList.add('fa-spin');
+      text.innerText = 'SYNC...';
+
+      try {
+        const p1 = fetch('/api/refresh-fr24', { method: 'POST' });
+        const p2 = fetch('/api/refresh-status', { method: 'POST' });
+
+        await Promise.allSettled([p1, p2]);
+
+        let countdown = 30;
+        const timer = setInterval(() => {
+          countdown--;
+          if (countdown > 0) {
+            text.innerText = `SYNC (${countdown}s)`;
+          } else {
+            clearInterval(timer);
+            btn.disabled = false;
+            isSyncingNow = false;
+            btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            icon.classList.remove('fa-spin');
+            text.innerText = 'SYNC';
+          }
+        }, 1000);
+      } catch (err) {
+        btn.disabled = false;
+        isSyncingNow = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        icon.classList.remove('fa-spin');
+        text.innerText = 'SYNC';
+      }
+    };
+
+    window.triggerRefreshToday = async (isSilent = true) => {
+      if (isTodayUpdating) return;
+      isTodayUpdating = true;
+      try {
+        await fetch('/api/refresh', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isTodayUpdating = false; }, 80000);
+    };
+
+    window.triggerRefreshFR24 = async (isSilent = true) => {
+      if (isFR24Updating) return;
+      isFR24Updating = true;
+      try {
+        await fetch('/api/refresh-fr24', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isFR24Updating = false; }, 25000);
+    };
+
+    window.triggerRefreshStatus = async (isSilent = true) => {
+      if (isStatusUpdating) return;
+      isStatusUpdating = true;
+      try {
+        await fetch('/api/refresh-status', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isStatusUpdating = false; }, 35000);
+    };
+
+    let autoSec = 0;
+
+    function updateAutoPilotUI() {
+      const btn = document.getElementById('btnAutoPilot');
+      const dot = document.getElementById('autoPilotDot');
+      const txt = document.getElementById('autoPilotText');
+
+      if (autoPilotEnabled) {
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
+        dot.className = "w-2 h-2 mr-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]";
+        txt.innerText = "AUTO";
+      } else {
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
+        dot.className = "w-2 h-2 mr-1.5 bg-slate-400 rounded-full";
+        txt.innerText = "OFF";
+      }
+    }
+
+    window.toggleAutoPilot = () => {
+      autoPilotEnabled = !autoPilotEnabled;
+      localStorage.setItem('vna_autopilot_enabled', autoPilotEnabled ? 'true' : 'false');
+      updateAutoPilotUI();
+    };
+
+    setInterval(() => {
+      if (!autoPilotEnabled) return;
+      autoSec++;
+
+      if (autoSec % 60 === 0) {
+        if (!isStatusUpdating) {
+          window.triggerRefreshStatus(true);
+        }
+      }
+
+      if ((autoSec + 20) % 180 === 0) {
+        if (!isFR24Updating) {
+          window.triggerRefreshFR24(true);
+        }
+      }
+
+      if ((autoSec + 40) % 600 === 0) {
+        if (!isTodayUpdating) {
+          window.triggerRefreshToday(true);
+        }
+      }
+    }, 1000);
+
+    updateButtonUI();
+    updateAutoPilotUI();
+    listenToFlights(rememberedDate);
+  </script>
+</body>
+</html>
