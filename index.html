@@ -69,7 +69,7 @@
   <!-- KHUNG ĐẦU TRANG ĐƯỢC GHIM CỐ ĐỊNH (FREEZE STICKY TOP) -->
   <div class="sticky top-0 z-50 shadow-md">
     
-    <!-- 1. Header chính mang bản sắc Vietnam Airlines -->
+    <!-- 1. Header chính mang bản sắc Vietnam Airlines (ĐÃ BỎ • VIAGS & Flightradar24) -->
     <header class="bg-vna-dark text-white border-b-4 border-vna-gold px-4 py-3 sm:px-6">
       <div class="max-w-7xl mx-auto sm:flex sm:items-center sm:justify-between">
         <div class="flex items-center space-x-3.5">
@@ -81,32 +81,21 @@
               <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white font-mono">SGN FLIGHT MONITOR</h1>
               <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-vna-gold text-vna-dark font-mono tracking-wider">VNA</span>
             </div>
-            <p class="text-xs text-sky-200 font-medium">Vietnam Airlines • Tan Son Nhat (SGN) • VIAGS & Flightradar24</p>
+            <!-- BỎ HIỂN THỊ VIAGS & FLIGHTRADAR24 -->
+            <p class="text-xs text-sky-200 font-medium">Vietnam Airlines • Tan Son Nhat (SGN)</p>
           </div>
         </div>
         
-        <!-- Cụm các nút Cập Nhật & Công tắc Tự động thông minh -->
-        <div class="mt-2.5 sm:mt-0 flex flex-wrap items-center gap-2">
-          <!-- Nút 1: VIAGS (D) -->
-          <button id="btnRefresh" onclick="triggerRefreshToday(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-sm cursor-pointer font-mono">
-            <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
-            <span id="refreshText">VIAGS (D)</span>
+        <!-- Cụm nút Tinh Gọn (GOM THÀNH 1 NÚT SYNC NOW DUY NHẤT & AUTO: ON) -->
+        <div class="mt-2.5 sm:mt-0 flex items-center space-x-2.5">
+          <!-- NÚT GOM DUY NHẤT: SYNC NOW -->
+          <button id="btnSyncNow" onclick="triggerSyncNow()" class="inline-flex items-center px-4 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-sm cursor-pointer font-mono">
+            <i id="syncIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
+            <span id="syncText">SYNC NOW</span>
           </button>
 
-          <!-- Nút 2: RADAR FR24 -->
-          <button id="btnRefreshFR24" onclick="triggerRefreshFR24(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer font-mono">
-            <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5 text-xs"></i>
-            <span id="refreshTextFR24">RADAR FR24</span>
-          </button>
-
-          <!-- Nút 3: STATUS (1m) -->
-          <button id="btnRefreshStatus" onclick="triggerRefreshStatus(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-blue text-white hover:bg-sky-800 active:scale-95 transition shadow-sm border border-white/20 cursor-pointer font-mono">
-            <i id="refreshIconStatus" class="fa-solid fa-clock mr-1.5 text-xs"></i>
-            <span id="refreshTextStatus">STATUS (1m)</span>
-          </button>
-
-          <!-- Nút 4: AUTO-PILOT -->
-          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Auto sync: STATUS 1m, FR24 3m, VIAGS 10m" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
+          <!-- CÔNG TẮC AUTO-PILOT -->
+          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Toggle Auto-Pilot" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
             <span id="autoPilotDot" class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]"></span>
             <span id="autoPilotText">AUTO: ON</span>
           </button>
@@ -166,12 +155,10 @@
   <!-- Main Container -->
   <main class="max-w-7xl mx-auto px-3 sm:px-6 py-4">
 
-    <!-- Thống kê nhanh & Trạng thái tải -->
+    <!-- Thống kê nhanh (ĐÃ BỎ DÒNG CHỮ SHIFT: 03:00 D -> 02:59 D+1, VẪN GIỮ NGUYÊN 100% THUẬT TOÁN) -->
     <div class="flex items-center justify-between mb-2.5 px-1 font-mono text-xs">
       <div class="text-slate-600 font-semibold flex items-center space-x-2">
         <span>SHOWING: <strong id="flightCount" class="text-vna-blue text-sm font-bold">0</strong> FLIGHTS</span>
-        <span class="text-slate-300">|</span>
-        <span class="text-slate-500">SHIFT: 03:00 D &rarr; 02:59 D+1</span>
       </div>
       <div id="loadingStatus" class="text-sky-700 font-semibold flex items-center">
         <i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i> SYNCING...
@@ -308,6 +295,7 @@
     let selectedDate = '';
     let nextDateStr = '';
 
+    let isSyncingNow = false;
     let isTodayUpdating = false;
     let isFR24Updating = false;
     let isStatusUpdating = false;
@@ -476,6 +464,7 @@
           return false;
         }
 
+        // Ca khai thác hàng không: 03:00 D -> 02:59 D+1 (Giữ nguyên 100% thuật toán)
         const sched = f.scheduled || '';
         if (f.date === selectedDate) {
           if (sched < '03:00') return false;
@@ -541,9 +530,7 @@
       }
       thead.innerHTML = headerHtml;
 
-      // =========================================================================
-      // THUẬT TOÁN CANH GIỮA MÀN HÌNH CHUẨN XÁC THEO GIỜ THỰC TẾ (ĐÃ SỬA LỖI 17:00)
-      // =========================================================================
+      // THUẬT TOÁN CANH GIỮA MÀN HÌNH CHUẨN XÁC
       const nowDate = new Date();
       const currentHHMM = String(nowDate.getHours()).padStart(2, '0') + ':' + String(nowDate.getMinutes()).padStart(2, '0');
       const isLateNight = currentHHMM < '03:00';
@@ -551,7 +538,7 @@
       let targetRowIndex = -1;
 
       if (currentDirection === 'Arrival') {
-        // 1. Ưu tiên 1: Chuyến đang hạ cánh (LANDING / APPROACH) mà CHƯA ĐÁP
+        // 1. Chuyến đang hạ cánh chưa Landed
         for (let i = 0; i < filtered.length; i++) {
           const st = getPriorityStatus(filtered[i]).toUpperCase();
           if ((st.includes('LANDING') || st.includes('APPROACH') || st.includes('ARRIVING')) && !st.includes('LANDED')) {
@@ -560,12 +547,11 @@
           }
         }
 
-        // 2. Ưu tiên 2: Chuyến đang bay có giờ FR24 gần giờ hiện tại và CHƯA ĐÁP
+        // 2. Chuyến có giờ FR24 chưa Landed
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
             const st = getPriorityStatus(filtered[i]).toUpperCase();
             const frEta = getIndependentFr24Eta(filtered[i]);
-            // TUYỆT ĐỐI BỎ QUA NẾU ĐÃ LANDED! CHỈ TÍNH CHUYẾN CHƯA ĐÁP
             if (!st.includes('LANDED') && frEta && frEta !== '--' && frEta >= currentHHMM) {
               targetRowIndex = i;
               break;
@@ -573,13 +559,12 @@
           }
         }
 
-        // 3. Mặc định: Chuyến bay sắp hạ cánh đầu tiên từ giờ hiện tại (STA >= giờ hiện tại) mà CHƯA ĐÁP
+        // 3. Chuyến sắp hạ cánh từ giờ hiện tại chưa Landed
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
             const f = filtered[i];
             const st = getPriorityStatus(f).toUpperCase();
             const schedTime = f.scheduled || '';
-            // BỎ QUA TẤT CẢ CÁC CHUYẾN ĐÃ LANDED TỪ TRƯỚC!
             if (!st.includes('LANDED')) {
               if (!isLateNight && f.date === selectedDate && schedTime >= currentHHMM) {
                 targetRowIndex = i;
@@ -592,8 +577,7 @@
           }
         }
       } else {
-        // ĐỐI VỚI CHUYẾN BAY ĐI (DEP):
-        // 1. Ưu tiên: Chuyến đang BOARDING mà CHƯA CẤT CÁNH (chưa Departed)
+        // 1. Chuyến Boarding chưa cất cánh
         for (let i = 0; i < filtered.length; i++) {
           const st = getPriorityStatus(filtered[i]).toUpperCase();
           if (st.includes('BOARDING') && !st.includes('DEPARTED')) {
@@ -602,7 +586,7 @@
           }
         }
 
-        // 2. Mặc định: Chuyến bay sắp khởi hành đầu tiên từ giờ hiện tại (STD >= giờ hiện tại) mà CHƯA CẤT CÁNH
+        // 2. Chuyến sắp cất cánh từ giờ hiện tại chưa Departed
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
             const f = filtered[i];
@@ -621,9 +605,8 @@
         }
       }
 
-      // 4. Nếu tất cả các chuyến trong ngày đều đã xong hết: lấy chuyến cuối cùng
       if (targetRowIndex === -1 && filtered.length > 0) {
-        targetRowIndex = filtered.length - 1;
+        targetRowIndex = 0;
       }
 
       // RENDER DỮ LIỆU
@@ -716,7 +699,6 @@
 
       tbody.innerHTML = rowsHtml;
 
-      // Canh giữa màn hình mượt mà
       if (shouldCenter) {
         setTimeout(() => {
           const focusRow = document.getElementById('currentFocusFlight');
@@ -753,160 +735,79 @@
       renderFlights(true);
     };
 
-    // 1. Nút VIAGS (D)
-    window.triggerRefreshToday = async (isSilent = false) => {
-      const btn = document.getElementById('btnRefresh');
-      const icon = document.getElementById('refreshIcon');
-      const text = document.getElementById('refreshText');
+    // NÚT GOM DUY NHẤT: SYNC NOW (Cập nhật đồng thời Status và FR24 siêu tốc)
+    window.triggerSyncNow = async () => {
+      const btn = document.getElementById('btnSyncNow');
+      const icon = document.getElementById('syncIcon');
+      const text = document.getElementById('syncText');
 
-      if (btn.disabled || isTodayUpdating) return;
+      if (btn.disabled || isSyncingNow) return;
 
+      isSyncingNow = true;
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      icon.classList.add('fa-spin');
+      text.innerText = 'SYNCING...';
+
+      try {
+        // Gửi lệnh cập nhật FR24 và STATUS song song
+        const p1 = fetch('/api/refresh-fr24', { method: 'POST' });
+        const p2 = fetch('/api/refresh-status', { method: 'POST' });
+
+        await Promise.allSettled([p1, p2]);
+
+        let countdown = 30;
+        const timer = setInterval(() => {
+          countdown--;
+          if (countdown > 0) {
+            text.innerText = `SYNCING (${countdown}s)`;
+          } else {
+            clearInterval(timer);
+            btn.disabled = false;
+            isSyncingNow = false;
+            btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            icon.classList.remove('fa-spin');
+            text.innerText = 'SYNC NOW';
+          }
+        }, 1000);
+      } catch (err) {
+        btn.disabled = false;
+        isSyncingNow = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        icon.classList.remove('fa-spin');
+        text.innerText = 'SYNC NOW';
+      }
+    };
+
+    // Các hàm phục vụ chế độ chạy ngầm Auto-Pilot (vẫn hoạt động 100%)
+    window.triggerRefreshToday = async (isSilent = true) => {
+      if (isTodayUpdating) return;
       isTodayUpdating = true;
-      btn.disabled = true;
-      btn.classList.add('opacity-75', 'cursor-not-allowed');
-      icon.classList.add('fa-spin');
-      text.innerText = 'SENDING...';
-
       try {
-        const res = await fetch('/api/refresh', { method: 'POST' });
-        const data = await res.json();
-
-        if (res.ok) {
-          let countdown = 80;
-          const timer = setInterval(() => {
-            countdown--;
-            if (countdown > 0) {
-              text.innerText = `VIAGS... (${countdown}s)`;
-            } else {
-              clearInterval(timer);
-              btn.disabled = false;
-              isTodayUpdating = false;
-              btn.classList.remove('opacity-75', 'cursor-not-allowed');
-              icon.classList.remove('fa-spin');
-              text.innerText = 'VIAGS (D)';
-            }
-          }, 1000);
-        } else {
-          if (!isSilent) alert('Error: ' + (data.error || 'Failed to dispatch request'));
-          btn.disabled = false;
-          isTodayUpdating = false;
-          btn.classList.remove('opacity-75', 'cursor-not-allowed');
-          icon.classList.remove('fa-spin');
-          text.innerText = 'VIAGS (D)';
-        }
-      } catch (err) {
-        if (!isSilent) alert('Server connection error!');
-        btn.disabled = false;
-        isTodayUpdating = false;
-        btn.classList.remove('opacity-75', 'cursor-not-allowed');
-        icon.classList.remove('fa-spin');
-        text.innerText = 'VIAGS (D)';
-      }
+        await fetch('/api/refresh', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isTodayUpdating = false; }, 80000);
     };
 
-    // 2. Nút RADAR FR24
-    window.triggerRefreshFR24 = async (isSilent = false) => {
-      const btn = document.getElementById('btnRefreshFR24');
-      const icon = document.getElementById('refreshIconFR24');
-      const text = document.getElementById('refreshTextFR24');
-
-      if (btn.disabled || isFR24Updating) return;
-
+    window.triggerRefreshFR24 = async (isSilent = true) => {
+      if (isFR24Updating) return;
       isFR24Updating = true;
-      btn.disabled = true;
-      btn.classList.add('opacity-75', 'cursor-not-allowed');
-      icon.classList.add('fa-spin');
-      text.innerText = 'SENDING...';
-
       try {
-        const res = await fetch('/api/refresh-fr24', { method: 'POST' });
-        const data = await res.json();
-
-        if (res.ok) {
-          let countdown = 25;
-          const timer = setInterval(() => {
-            countdown--;
-            if (countdown > 0) {
-              text.innerText = `FR24... (${countdown}s)`;
-            } else {
-              clearInterval(timer);
-              btn.disabled = false;
-              isFR24Updating = false;
-              btn.classList.remove('opacity-75', 'cursor-not-allowed');
-              icon.classList.remove('fa-spin');
-              text.innerText = 'RADAR FR24';
-            }
-          }, 1000);
-        } else {
-          if (!isSilent) alert('Error: ' + (data.error || 'Failed to dispatch request'));
-          btn.disabled = false;
-          isFR24Updating = false;
-          btn.classList.remove('opacity-75', 'cursor-not-allowed');
-          icon.classList.remove('fa-spin');
-          text.innerText = 'RADAR FR24';
-        }
-      } catch (err) {
-        if (!isSilent) alert('Server connection error!');
-        btn.disabled = false;
-        isFR24Updating = false;
-        btn.classList.remove('opacity-75', 'cursor-not-allowed');
-        icon.classList.remove('fa-spin');
-        text.innerText = 'RADAR FR24';
-      }
+        await fetch('/api/refresh-fr24', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isFR24Updating = false; }, 25000);
     };
 
-    // 3. Nút STATUS (1m)
-    window.triggerRefreshStatus = async (isSilent = false) => {
-      const btn = document.getElementById('btnRefreshStatus');
-      const icon = document.getElementById('refreshIconStatus');
-      const text = document.getElementById('refreshTextStatus');
-
-      if (btn.disabled || isStatusUpdating) return;
-
+    window.triggerRefreshStatus = async (isSilent = true) => {
+      if (isStatusUpdating) return;
       isStatusUpdating = true;
-      btn.disabled = true;
-      btn.classList.add('opacity-75', 'cursor-not-allowed');
-      icon.classList.add('fa-spin');
-      text.innerText = 'SENDING...';
-
       try {
-        const res = await fetch('/api/refresh-status', { method: 'POST' });
-        const data = await res.json();
-
-        if (res.ok) {
-          let countdown = 35;
-          const timer = setInterval(() => {
-            countdown--;
-            if (countdown > 0) {
-              text.innerText = `STATUS (${countdown}s)`;
-            } else {
-              clearInterval(timer);
-              btn.disabled = false;
-              isStatusUpdating = false;
-              btn.classList.remove('opacity-75', 'cursor-not-allowed');
-              icon.classList.remove('fa-spin');
-              text.innerText = 'STATUS (1m)';
-            }
-          }, 1000);
-        } else {
-          if (!isSilent) alert('Error: ' + (data.error || 'Failed to dispatch request'));
-          btn.disabled = false;
-          isStatusUpdating = false;
-          btn.classList.remove('opacity-75', 'cursor-not-allowed');
-          icon.classList.remove('fa-spin');
-          text.innerText = 'STATUS (1m)';
-        }
-      } catch (err) {
-        if (!isSilent) alert('Server connection error!');
-        btn.disabled = false;
-        isStatusUpdating = false;
-        btn.classList.remove('opacity-75', 'cursor-not-allowed');
-        icon.classList.remove('fa-spin');
-        text.innerText = 'STATUS (1m)';
-      }
+        await fetch('/api/refresh-status', { method: 'POST' });
+      } catch (e) {}
+      setTimeout(() => { isStatusUpdating = false; }, 35000);
     };
 
-    // 4. AUTO-PILOT SCHEDULER
+    // AUTO-PILOT SCHEDULER
     let autoSec = 0;
 
     function updateAutoPilotUI() {
@@ -915,11 +816,11 @@
       const txt = document.getElementById('autoPilotText');
 
       if (autoPilotEnabled) {
-        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
+        btn.className = "inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
         dot.className = "w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]";
         txt.innerText = "AUTO: ON";
       } else {
-        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
+        btn.className = "inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
         dot.className = "w-2 h-2 mr-2 bg-slate-400 rounded-full";
         txt.innerText = "AUTO: OFF";
       }
@@ -935,18 +836,21 @@
       if (!autoPilotEnabled) return;
       autoSec++;
 
+      // Nhịp 1: Mỗi 1 phút (60 giây) -> Tự động quét STATUS ngày hôm nay
       if (autoSec % 60 === 0) {
         if (!isStatusUpdating) {
           window.triggerRefreshStatus(true);
         }
       }
 
+      // Nhịp 2: Mỗi 3 phút (180 giây, lệch 20 giây) -> Tự động quét FR24
       if ((autoSec + 20) % 180 === 0) {
         if (!isFR24Updating) {
           window.triggerRefreshFR24(true);
         }
       }
 
+      // Nhịp 3: Mỗi 10 phút (600 giây, lệch 40 giây) -> Tự động quét VIAGS tổng
       if ((autoSec + 40) % 600 === 0) {
         if (!isTodayUpdating) {
           window.triggerRefreshToday(true);
