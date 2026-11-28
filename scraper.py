@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -5,7 +6,7 @@ import time
 import urllib.request
 from datetime import datetime, timedelta
 import pytz
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 import firebase_admin
 from firebase_admin import credentials, db
 
@@ -61,7 +62,7 @@ def get_airborne_flights_to_sgn():
     for url in feed_urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     for f_id, info in data.items():
@@ -107,7 +108,7 @@ def find_live_flight_id_via_search(flight_no):
         try:
             url = f"https://www.flightradar24.com/v1/search/web/find?query={q}&limit=15"
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     for item in data.get("results", []):
@@ -137,7 +138,7 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
     try:
         url = f"https://data-live.flightradar24.com/clickhandler/?version=1.5&flight={flight_id}"
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             if resp.status == 200:
                 data = json.loads(resp.read().decode("utf-8"))
                 dest = (data.get("airport", {}).get("destination", {}).get("code", {}).get("iata") or "").upper()
@@ -155,7 +156,6 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
                 est_arr = time_info.get("estimated", {}).get("arrival")
                 sched_arr = time_info.get("scheduled", {}).get("arrival")
 
-                # Nếu đã hạ cánh hoặc chưa hề cất cánh thì bỏ qua
                 if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
                     return "--", None
                 if not is_live and real_dep is None:
@@ -201,7 +201,7 @@ def fetch_live_eta_via_list_api(flight_no):
         try:
             url = f"https://api.flightradar24.com/common/v1/flight/list.json?query={q}&fetchBy=flight&page=1&limit=5"
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     for item in data.get("result", {}).get("response", {}).get("data", []):
@@ -223,7 +223,6 @@ def fetch_live_eta_via_list_api(flight_no):
                         if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
                             continue
 
-                        # BẮT BUỘC máy bay phải đang LIVE hoặc đã có giờ cất cánh thực tế (real_dep)
                         if not (is_live or (real_dep is not None and real_arr is None)):
                             continue
 
@@ -271,8 +270,6 @@ def is_flight_candidate_for_live_check(f, now_vn):
         return False, None
 
     latest_milestone = max(candidates)
-    # Quốc nội bay tối đa ~2h15p -> chỉ mở cửa sổ trước giờ đáp 3.5 tiếng
-    # Quốc tế bay đường dài -> mở cửa sổ trước giờ đáp tối đa 14 tiếng
     max_lookahead_hours = 3.5 if f_type == "DOMESTIC" else 14.0
     is_eligible = (now_vn - timedelta(hours=4)) <= latest_milestone <= (now_vn + timedelta(hours=max_lookahead_hours))
     return is_eligible, latest_milestone
@@ -301,78 +298,110 @@ def sanitize_future_remark(remarks, sec_direction):
             return "Check-in open" if sec_direction == "Departure" else "Normal"
     return curr_rem
 
-# CẬP NHẬT TỪNG MỤC: CÓ KHÓA KIỂM TRA THỜI GIAN THỰC
-def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight_type, tz_vn, is_status_only=False):
+# LƯU DỮ LIỆU GỘP 1 LẦN CHO CẢ NGÀY (CHỐNG XUNG ĐỘT KHI CHẠY SONG SONG 4 TAB)
+def save_merged_day_results(d, results_by_section, tz_vn, is_status_only=False):
     ref = db.reference(f"daily_schedules/{d}")
     existing_data = ref.get()
     existing_list = []
     if existing_data and isinstance(existing_data, dict):
         existing_list = existing_data.get("flights", [])
 
-    live_status_map = load_live_statuses(d)
+    live_status_ref = db.reference(f"live_statuses/{d}")
+    live_status_map = live_status_ref.get()
+    if not isinstance(live_status_map, dict):
+        live_status_map = {}
+
     now_vn = datetime.now(tz_vn)
     today_str = now_vn.strftime("%Y-%m-%d")
+    is_future_date = (d > today_str)
 
     if is_status_only:
-        new_status_map = {f.get("flight_no"): f.get("remarks") for f in section_flights if f.get("flight_no")}
+        # Tạo bảng tra cứu nhanh từ kết quả 4 tab song song
+        fast_lookup = {}
+        status_updates_for_live = {}
+
+        for (sec_dir, sec_type), fl_list in results_by_section.items():
+            for f in fl_list:
+                f_no = f.get("flight_no")
+                if f_no:
+                    fast_lookup[(sec_dir, sec_type, f_no)] = f
+                    rem = f.get("remarks", "Normal")
+                    if rem != "Normal" or f_no not in live_status_map:
+                        status_updates_for_live[f_no] = rem
+
         updated_count = 0
         for item in existing_list:
-            if item.get("direction") == sec_direction and item.get("flight_type") == sec_flight_type:
-                f_no = item.get("flight_no")
+            s_dir = item.get("direction")
+            s_type = item.get("flight_type")
+            f_no = item.get("flight_no")
+            key = (s_dir, s_type, f_no)
+
+            if key in fast_lookup:
+                new_f = fast_lookup[key]
+                # Cập nhật luôn cả GATE, BELT, ETD/ETA mới nhất
+                if new_f.get("estimated") and new_f.get("estimated") != "--:--":
+                    item["estimated"] = new_f["estimated"]
+                if s_dir == "Departure" and new_f.get("gate") and new_f.get("gate") != "--":
+                    item["gate"] = new_f["gate"]
+                if s_dir == "Arrival" and new_f.get("belt") and new_f.get("belt") != "--":
+                    item["belt"] = new_f["belt"]
+
                 old_rem = (item.get("remarks") or "").strip().upper()
-                if sec_direction == "Departure" and "DEPARTED" in old_rem:
+                if s_dir == "Departure" and "DEPARTED" in old_rem:
                     continue
-                if sec_direction == "Arrival" and "LANDED" in old_rem:
+                if s_dir == "Arrival" and "LANDED" in old_rem:
                     continue
-                if f_no in new_status_map:
-                    item["remarks"] = new_status_map[f_no]
-                    updated_count += 1
+
+                item["remarks"] = new_f.get("remarks", item.get("remarks", "Normal"))
+                updated_count += 1
 
         ref.set({
             "date": d,
             "flights": existing_list,
-            "updated_at": datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
+            "updated_at": now_vn.strftime("%Y-%m-%d %H:%M:%S")
         })
-        print(f"   💾 [STATUS CỘNG DỒN] Ngày {d} ({sec_direction} - {sec_flight_type}): Đã cập nhật trạng thái {updated_count} chuyến.")
+        if status_updates_for_live and d == today_str:
+            live_status_ref.update(status_updates_for_live)
+
+        print(f"   ⚡ [SIÊU TỐC 4 TAB - NGÀY {d}]: Đã cập nhật đồng bộ STATUS/GATE/BELT/ETD cho {updated_count} chuyến!")
         return
 
-    # LÀM MỚI DANH SÁCH MỤC NÀY
+    # CHẾ ĐỘ LÀM MỚI ĐẦY ĐỦ (today_only / both_days / scheduled_auto)
+    updated_sections = set(results_by_section.keys())
     preserved_list = [
-        f for f in existing_list 
-        if not (f.get("direction") == sec_direction and f.get("flight_type") == sec_flight_type)
+        f for f in existing_list
+        if (f.get("direction"), f.get("flight_type")) not in updated_sections
     ]
 
     cleaned_new_flights = []
-    is_future_date = (d > today_str)
+    for (sec_dir, sec_type), fl_list in results_by_section.items():
+        for f in fl_list:
+            f_no = (f.get("flight_no") or "").replace(" ", "").upper()
+            sched_str = f.get("scheduled", "--:--")
 
-    for f in section_flights:
-        f_no = (f.get("flight_no") or "").replace(" ", "").upper()
-        sched_str = f.get("scheduled", "--:--")
-
-        if is_future_date:
-            f["remarks"] = sanitize_future_remark(f.get("remarks"), sec_direction)
-        else:
-            prior_status = live_status_map.get(f_no)
-            if prior_status:
-                try:
-                    flight_sched_dt = tz_vn.localize(datetime.strptime(f"{d} {sched_str}", "%Y-%m-%d %H:%M"))
-                    if flight_sched_dt <= now_vn:
-                        if sec_direction == "Departure" and "DEPARTED" in prior_status.upper():
-                            f["remarks"] = prior_status
-                        elif sec_direction == "Arrival" and "LANDED" in prior_status.upper():
-                            f["remarks"] = prior_status
-                except Exception:
-                    pass
-
-        cleaned_new_flights.append(f)
+            if is_future_date:
+                f["remarks"] = sanitize_future_remark(f.get("remarks"), sec_dir)
+            else:
+                prior_status = live_status_map.get(f_no)
+                if prior_status:
+                    try:
+                        flight_sched_dt = tz_vn.localize(datetime.strptime(f"{d} {sched_str}", "%Y-%m-%d %H:%M"))
+                        if flight_sched_dt <= now_vn:
+                            if sec_dir == "Departure" and "DEPARTED" in prior_status.upper():
+                                f["remarks"] = prior_status
+                            elif sec_dir == "Arrival" and "LANDED" in prior_status.upper():
+                                f["remarks"] = prior_status
+                    except Exception:
+                        pass
+            cleaned_new_flights.append(f)
 
     final_list = preserved_list + cleaned_new_flights
     ref.set({
         "date": d,
         "flights": final_list,
-        "updated_at": datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
+        "updated_at": now_vn.strftime("%Y-%m-%d %H:%M:%S")
     })
-    print(f"   💾 [LƯU ĐẦY ĐỦ] Ngày {d} ({sec_direction} - {sec_flight_type}): Đã làm mới {len(cleaned_new_flights)} chuyến, tổng cộng kho có {len(final_list)} chuyến.")
+    print(f"   💾 [LƯU ĐẦY ĐỦ NGÀY {d}]: Tổng cộng kho có {len(final_list)} chuyến.")
 
 def cleanup_old_data(now_vn):
     cutoff_date = (now_vn - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -405,7 +434,7 @@ def run_fr24_cumulative_update(target_dates, now_vn):
         if eta_val and eta_val != "--":
             fast_live_cache[f_no] = (eta_val, arr_dt)
             print(f"   ⚡ [TẦNG 1 LIVE] {f_no} -> ETA: {eta_val}")
-        time.sleep(0.15)
+        time.sleep(0.1)
 
     for d in target_dates:
         flights_list = load_day_flights(d)
@@ -417,7 +446,6 @@ def run_fr24_cumulative_update(target_dates, now_vn):
         if not isinstance(existing_etas, dict):
             existing_etas = {}
 
-        # BƯỚC DỌN RÁC: Xóa ngay mọi ETA bị lưu nhầm vào các chuyến bay chưa tới khung giờ bay
         cleaned_etas = dict(existing_etas)
         removed_stale_count = 0
 
@@ -433,7 +461,6 @@ def run_fr24_cumulative_update(target_dates, now_vn):
             fr24_ref.set(cleaned_etas)
             print(f"🧹 [DỌN RÁC FR24 - NGÀY {d}]: Đã xóa {removed_stale_count} giờ FR24 ảo của các chuyến bay chưa cất cánh!")
 
-        # Đồng thời nếu là ngày tương lai, sửa luôn chữ "Arrival" / "Landed" bị dính trong daily_schedules
         if d > today_str:
             schedule_fixed = False
             for f in flights_list:
@@ -471,18 +498,15 @@ def run_fr24_cumulative_update(target_dates, now_vn):
                     live_f_id = find_live_flight_id_via_search(f_no)
                     if live_f_id:
                         eta_val, live_arr_dt = fetch_airborne_eta_by_id(live_f_id, f_no)
-                    time.sleep(0.15)
+                    time.sleep(0.1)
 
                 if eta_val == "--":
                     eta_val, live_arr_dt = fetch_live_eta_via_list_api(f_no)
-                    time.sleep(0.15)
+                    time.sleep(0.1)
 
                 if eta_val and eta_val != "--" and is_valid_arrival_eta(eta_val, sta_str):
-                    # KHÓA CHỐNG RÒ RỈ NGÀY TƯƠNG LAI:
-                    # Nếu đang xét ngày mai (d > today_str), BẮT BUỘC phải có live_arr_dt xác thực từ FR24
                     if d > today_str and live_arr_dt is None:
                         continue
-                    # Nếu có live_arr_dt, thời điểm đáp thực tế của FR24 không được lệch quá 6 tiếng so với giờ STA của ngày đang xét
                     if live_arr_dt is not None:
                         if abs((live_arr_dt - f_milestone_dt).total_seconds()) > 6 * 3600:
                             continue
@@ -493,17 +517,201 @@ def run_fr24_cumulative_update(target_dates, now_vn):
 
         print(f"✓ Ngày {d}: Đã lưu cộng dồn {updated_count} chuyến đang LIVE vào ngăn fr24_etas/{d}!")
 
-def select_and_wait(page, selector, value):
-    page.wait_for_selector(selector, state="attached", timeout=25000)
+async def async_select_and_wait(page, selector, value):
+    await page.wait_for_selector(selector, state="attached", timeout=20000)
     try:
-        with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=20000):
-            page.select_option(selector, value=value)
-        time.sleep(2.5)
+        async with page.expect_response(lambda r: "flight-schedules" in r.url and r.request.method == "POST", timeout=15000):
+            await page.select_option(selector, value=value)
+        await asyncio.sleep(1.0)
     except Exception:
-        time.sleep(2.5)
+        await asyncio.sleep(1.2)
 
-# 2. Quy trình chính
-def scrape_viags():
+# HÀM QUÉT 1 TAB BẤT ĐỒNG BỘ (CHẠY SONG SONG CÙNG LÚC 4 TAB)
+async def scrape_single_section_async(context, current_date, sec, today_str, now_vn, tz_vn, is_status_only, current_live_statuses):
+    SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
+    SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
+    SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
+    SEL_DATE = "#ctl00_mainContent_ctl00_datetimepicker1"
+
+    # Tính mốc giờ dừng thông minh cho chế độ status_only (Giờ hiện tại + 3.5 tiếng)
+    stop_hhmm = "23:59"
+    if is_status_only and current_date == today_str:
+        stop_dt = now_vn + timedelta(hours=3, minutes=30)
+        if stop_dt.strftime("%Y-%m-%d") == today_str:
+            stop_hhmm = stop_dt.strftime("%H:%M")
+
+    max_load_clicks = 25
+
+    for attempt in range(2):
+        page = await context.new_page()
+        # Chặn tải ảnh, font, media để tăng tốc độ mở trang gấp 3 lần
+        await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font"] else route.continue_())
+        try:
+            url = "https://www.viags.vn/en-US/flight-schedules"
+            await page.goto(url, wait_until="domcontentloaded", timeout=35000)
+            await page.wait_for_selector(SEL_ORIGIN, state="attached", timeout=20000)
+            await asyncio.sleep(0.6)
+
+            await page.evaluate(f"""(targetDate) => {{
+                const dateInp = document.querySelector('{SEL_DATE}, [name$="datetimepicker1"]');
+                if (dateInp && dateInp.value !== targetDate) {{
+                    dateInp.value = targetDate;
+                }}
+            }}""", current_date)
+            await asyncio.sleep(0.2)
+
+            await async_select_and_wait(page, SEL_ORIGIN, "SGN")
+
+            if sec["station"] != "DOM":
+                await async_select_and_wait(page, SEL_STATION, sec["station"])
+
+            if sec["trip"] != "D":
+                await async_select_and_wait(page, SEL_TRIP, sec["trip"])
+
+            for _ in range(2):
+                th_locs = await page.locator(".c-table1 table thead tr th, table thead tr th").all()
+                headers_check = [(await th.inner_text()).strip().lower() for th in th_locs]
+                if sec["d_type"] == "Arrival" and ("destination" in headers_check) and ("from" not in headers_check):
+                    await async_select_and_wait(page, SEL_TRIP, "A")
+                elif sec["d_type"] == "Departure" and ("from" in headers_check) and ("destination" not in headers_check):
+                    await async_select_and_wait(page, SEL_TRIP, "D")
+                else:
+                    break
+
+            load_count = 0
+            while True:
+                # Kiểm tra mốc dừng thông minh (Smart Time-Stop) khi chạy status_only
+                if is_status_only and stop_hhmm != "23:59":
+                    last_time_str = await page.evaluate("""() => {
+                        const rows = document.querySelectorAll('.c-table1 table tbody tr, table tbody tr');
+                        if (!rows || rows.length === 0) return '';
+                        const lastRow = rows[rows.length - 1];
+                        const firstTd = lastRow.querySelector('td');
+                        return firstTd ? firstTd.innerText.trim() : '';
+                    }""")
+                    if re.match(r"^\d{2}:\d{2}$", last_time_str) and last_time_str >= stop_hhmm and last_time_str >= "04:00":
+                        break
+
+                btn = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
+                if await btn.count() > 0 and await btn.first.is_visible():
+                    load_count += 1
+                    try:
+                        prev_row_count = await page.locator(".c-table1 table tbody tr, table tbody tr").count()
+                        await btn.first.click(timeout=2000)
+                        # Chờ thông minh tối đa 1.2s ngay khi số dòng tăng lên là đi tiếp ngay
+                        for _ in range(6):
+                            await asyncio.sleep(0.2)
+                            curr_row_count = await page.locator(".c-table1 table tbody tr, table tbody tr").count()
+                            if curr_row_count > prev_row_count:
+                                break
+                    except Exception:
+                        break
+                    if load_count >= max_load_clicks:
+                        break
+                else:
+                    break
+
+            # Trích xuất toàn bộ bảng cực nhanh bằng 1 lệnh Javascript duy nhất
+            table_data = await page.evaluate("""() => {
+                const ths = Array.from(document.querySelectorAll('.c-table1 table thead tr th, table thead tr th'));
+                const headers = ths.map(th => th.innerText.trim().toLowerCase());
+                const trs = Array.from(document.querySelectorAll('.c-table1 table tbody tr, table tbody tr'));
+                const rows = trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()));
+                return { headers, rows };
+            }""")
+
+            headers = table_data.get("headers", [])
+            rows = table_data.get("rows", [])
+            section_flights = []
+
+            for tds in rows:
+                if not tds or len(tds) < 5:
+                    continue
+
+                col_map = {}
+                for idx, val in enumerate(tds):
+                    h_name = headers[idx] if idx < len(headers) else f"col_{idx}"
+                    col_map[h_name] = val
+
+                row_raw_text = " ".join(col_map.values()).upper()
+                flight_no = col_map.get("flights", "").replace(" ", "").upper()
+                airline = col_map.get("airlines", "")
+
+                is_vna = (
+                    flight_no.startswith("VN") or
+                    "VIETNAM AIRLINES" in airline.upper() or
+                    "VIETNAM AIRLINES" in row_raw_text
+                )
+
+                if not is_vna:
+                    match_vn = re.search(r'\b(VN\s*\d{2,4})\b', row_raw_text)
+                    if match_vn:
+                        is_vna = True
+                        flight_no = match_vn.group(1).replace(" ", "")
+
+                if is_vna and flight_no:
+                    route = col_map.get("destination", "") if sec["d_type"] == "Departure" else col_map.get("from", "")
+                    gate = col_map.get("gate", "--") if sec["d_type"] == "Departure" else "--"
+                    if not gate:
+                        gate = "--"
+
+                    belt = col_map.get("baggage belts", col_map.get("belt", "--")) if sec["d_type"] == "Arrival" else "--"
+                    if not belt:
+                        belt = "--"
+
+                    remarks = col_map.get("remarks", "Normal").strip()
+                    if not remarks:
+                        remarks = "Normal"
+
+                    direction_upper = sec["d_type"].upper()
+                    sched_str = col_map.get("scheduled", "--:--")
+
+                    if current_date == today_str:
+                        existing_status = current_live_statuses.get(flight_no)
+                        if existing_status:
+                            try:
+                                flight_sched_dt = tz_vn.localize(datetime.strptime(f"{current_date} {sched_str}", "%Y-%m-%d %H:%M"))
+                                if flight_sched_dt <= now_vn:
+                                    if direction_upper == "DEPARTURE" and "DEPARTED" in existing_status.upper():
+                                        remarks = existing_status
+                                    elif direction_upper == "ARRIVAL" and "LANDED" in existing_status.upper():
+                                        remarks = existing_status
+                            except Exception:
+                                pass
+                    else:
+                        remarks = sanitize_future_remark(remarks, sec["d_type"])
+
+                    flight_item = {
+                        "date": current_date,
+                        "scheduled": col_map.get("scheduled", "--:--"),
+                        "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
+                        "destination_or_from": route,
+                        "route": route,
+                        "airline": "Vietnam Airlines",
+                        "flight_no": flight_no,
+                        "gate": gate,
+                        "belt": belt,
+                        "remarks": remarks,
+                        "flight_type": sec["f_type"],
+                        "direction": sec["d_type"],
+                        "airport": "SGN"
+                    }
+                    section_flights.append(flight_item)
+
+            print(f"✓ [NGÀY {current_date}] {sec['name']}: Đã quét {len(section_flights)} chuyến (Bấm Load more {load_count} lần).")
+            await page.close()
+            return (sec["d_type"], sec["f_type"]), section_flights
+        except Exception:
+            try:
+                await page.close()
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
+    return (sec["d_type"], sec["f_type"]), []
+
+# 2. Quy trình chính chạy bất đồng bộ (Async)
+async def main_async():
     init_firebase()
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     now_vn = datetime.now(tz_vn)
@@ -529,33 +737,25 @@ def scrape_viags():
         print("=== HOÀN TẤT QUÉT 3 TẦNG FLIGHTRADAR24 ===")
         return
 
-    # CHẾ ĐỘ 2: CẬP NHẬT RIÊNG STATUS
+    # CHẾ ĐỘ 2: CẬP NHẬT SIÊU TỐC STATUS 60S (SONG SONG 4 TAB)
     is_status_only = (scrape_mode == "status_only")
     if is_status_only:
         print(f"=======================================================")
-        print(f" >>> [CHẾ ĐỘ STATUS SIÊU TỐC 30S]: NGÀY {today_str} <<<")
+        print(f" >>> [CHẾ ĐỘ STATUS SIÊU TỐC 4 TAB SONG SONG]: {today_str} <<<")
         print(f"=======================================================")
         scrape_dates = [today_str]
-        max_load_clicks = 6
     elif scrape_mode == "today_only":
         if not load_day_flights(day_after_str):
             scrape_dates = [today_str, tomorrow_str, day_after_str]
         else:
             scrape_dates = [today_str]
-        max_load_clicks = 25
-        print(f">>> [PHẦN MỀM CHÍNH]: Quét ngày hôm nay {today_str} <<<")
+        print(f">>> [PHẦN MỀM CHÍNH]: Quét đầy đủ ngày hôm nay {today_str} <<<")
     else:
         scrape_dates = [today_str, tomorrow_str, day_after_str]
-        max_load_clicks = 25
         print(f">>> [PHẦN MỀM CHÍNH VIAGS]: Quét ĐẦY ĐỦ 3 ngày ({scrape_dates}) <<<")
         if scrape_mode == "scheduled_auto":
             run_fr24_cumulative_update(target_dates, now_vn)
             cleanup_old_data(now_vn)
-
-    SEL_ORIGIN = "#ctl00_mainContent_ctl00_ddlOriginal"
-    SEL_STATION = "#ctl00_mainContent_ctl00_ddlStation"
-    SEL_TRIP = "#ctl00_mainContent_ctl00_ddlTrip"
-    SEL_DATE = "#ctl00_mainContent_ctl00_datetimepicker1"
 
     sections = [
         {"name": "QUỐC NỘI - BAY ĐI", "station": "DOM", "trip": "D", "f_type": "Domestic", "d_type": "Departure"},
@@ -564,185 +764,42 @@ def scrape_viags():
         {"name": "QUỐC TẾ - BAY ĐẾN", "station": "INT", "trip": "A", "f_type": "International", "d_type": "Arrival"}
     ]
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={"width": 1440, "height": 900}
         )
 
         for current_date in scrape_dates:
+            start_t = time.time()
             print(f"\n#######################################################")
-            print(f" ####### QUÉT VIAGS NGÀY: {current_date} #######")
+            print(f" ####### QUÉT SONG SONG 4 TAB VIAGS NGÀY: {current_date} #######")
             print(f"#######################################################")
 
-            live_status_ref = db.reference(f"live_statuses/{current_date}")
-            if current_date == today_str:
-                current_live_statuses = live_status_ref.get()
-                if not isinstance(current_live_statuses, dict):
-                    current_live_statuses = {}
-            else:
-                current_live_statuses = {}
+            current_live_statuses = load_live_statuses(current_date) if current_date == today_str else {}
 
-            for sec in sections:
-                print(f"\n--- [NGÀY {current_date}] ĐANG MỞ: {sec['name']} ---")
+            # MỞ ĐỒNG THỜI CẢ 4 TAB CÙNG LÚC
+            tasks = [
+                scrape_single_section_async(context, current_date, sec, today_str, now_vn, tz_vn, is_status_only, current_live_statuses)
+                for sec in sections
+            ]
+            results = await asyncio.gather(*tasks)
 
-                for attempt in range(2):
-                    page = context.new_page()
-                    try:
-                        url = "https://www.viags.vn/en-US/flight-schedules"
-                        page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                        page.wait_for_selector(SEL_ORIGIN, state="attached", timeout=25000)
-                        time.sleep(1.5)
+            results_by_section = {}
+            for key, fl_list in results:
+                if fl_list:
+                    results_by_section[key] = fl_list
 
-                        page.evaluate(f"""(targetDate) => {{
-                            const dateInp = document.querySelector('{SEL_DATE}, [name$="datetimepicker1"]');
-                            if (dateInp && dateInp.value !== targetDate) {{
-                                dateInp.value = targetDate;
-                            }}
-                        }}""", current_date)
-                        time.sleep(0.3)
+            if results_by_section:
+                save_merged_day_results(current_date, results_by_section, tz_vn, is_status_only=is_status_only)
 
-                        select_and_wait(page, SEL_ORIGIN, "SGN")
+            elapsed = round(time.time() - start_t, 1)
+            print(f"⏱️ Hoàn tất ngày {current_date} chỉ trong {elapsed} giây!")
 
-                        if sec["station"] != "DOM":
-                            select_and_wait(page, SEL_STATION, sec["station"])
+        await browser.close()
 
-                        if sec["trip"] != "D":
-                            select_and_wait(page, SEL_TRIP, sec["trip"])
-
-                        for check_i in range(3):
-                            headers_check = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
-                            if sec["d_type"] == "Arrival" and ("destination" in headers_check) and ("from" not in headers_check):
-                                select_and_wait(page, SEL_TRIP, "A")
-                            elif sec["d_type"] == "Departure" and ("from" in headers_check) and ("destination" not in headers_check):
-                                select_and_wait(page, SEL_TRIP, "D")
-                            else:
-                                break
-
-                        load_count = 0
-                        while True:
-                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            time.sleep(0.8)
-
-                            btn = page.locator(".c-btn1:not(.hidden):visible, span.c-btn1:not(.hidden):visible")
-                            if btn.count() > 0 and btn.first.is_visible():
-                                load_count += 1
-                                try:
-                                    btn.first.scroll_into_view_if_needed()
-                                    btn.first.click(timeout=2500)
-                                    time.sleep(1.8)
-                                except Exception:
-                                    break
-                                if load_count >= max_load_clicks:
-                                    break
-                            else:
-                                break
-
-                        headers = [th.inner_text().strip().lower() for th in page.locator(".c-table1 table thead tr th, table thead tr th").all()]
-                        rows = page.locator(".c-table1 table tbody tr, table tbody tr").all()
-
-                        section_flights = []
-                        status_updates_for_live = {}
-
-                        for row in rows:
-                            tds = row.locator("td").all()
-                            if not tds or len(tds) < 5:
-                                continue
-
-                            col_map = {}
-                            for idx, td in enumerate(tds):
-                                h_name = headers[idx] if idx < len(headers) else f"col_{idx}"
-                                col_map[h_name] = td.inner_text().strip()
-
-                            row_raw_text = " ".join(col_map.values()).upper()
-                            flight_no = col_map.get("flights", "").replace(" ", "").upper()
-                            airline = col_map.get("airlines", "")
-
-                            is_vna = (
-                                flight_no.startswith("VN") or 
-                                "VIETNAM AIRLINES" in airline.upper() or 
-                                "VIETNAM AIRLINES" in row_raw_text
-                            )
-
-                            if not is_vna:
-                                match_vn = re.search(r'\b(VN\s*\d{2,4})\b', row_raw_text)
-                                if match_vn:
-                                    is_vna = True
-                                    flight_no = match_vn.group(1).replace(" ", "")
-
-                            if is_vna and flight_no:
-                                route = col_map.get("destination", "") if sec["d_type"] == "Departure" else col_map.get("from", "")
-                                gate = col_map.get("gate", "--") if sec["d_type"] == "Departure" else "--"
-                                if not gate:
-                                    gate = "--"
-
-                                belt = col_map.get("baggage belts", col_map.get("belt", "--")) if sec["d_type"] == "Arrival" else "--"
-                                if not belt:
-                                    belt = "--"
-
-                                remarks = col_map.get("remarks", "Normal").strip()
-                                if not remarks:
-                                    remarks = "Normal"
-
-                                direction_upper = sec["d_type"].upper()
-                                sched_str = col_map.get("scheduled", "--:--")
-
-                                if current_date == today_str:
-                                    existing_status = current_live_statuses.get(flight_no)
-                                    if existing_status:
-                                        try:
-                                            flight_sched_dt = tz_vn.localize(datetime.strptime(f"{current_date} {sched_str}", "%Y-%m-%d %H:%M"))
-                                            if flight_sched_dt <= now_vn:
-                                                if direction_upper == "DEPARTURE" and "DEPARTED" in existing_status.upper():
-                                                    remarks = existing_status
-                                                elif direction_upper == "ARRIVAL" and "LANDED" in existing_status.upper():
-                                                    remarks = existing_status
-                                        except Exception:
-                                            pass
-
-                                    if is_status_only:
-                                        if remarks != "Normal" or flight_no not in current_live_statuses:
-                                            status_updates_for_live[flight_no] = remarks
-                                            current_live_statuses[flight_no] = remarks
-                                else:
-                                    remarks = sanitize_future_remark(remarks, sec["d_type"])
-
-                                flight_item = {
-                                    "date": current_date,
-                                    "scheduled": col_map.get("scheduled", "--:--"),
-                                    "estimated": col_map.get("estimated", col_map.get("scheduled", "--:--")),
-                                    "destination_or_from": route,
-                                    "route": route,
-                                    "airline": "Vietnam Airlines",
-                                    "flight_no": flight_no,
-                                    "gate": gate,
-                                    "belt": belt,
-                                    "remarks": remarks,
-                                    "flight_type": sec["f_type"],
-                                    "direction": sec["d_type"],
-                                    "airport": "SGN"
-                                }
-                                section_flights.append(flight_item)
-
-                        update_section_flights_cleanly(current_date, section_flights, sec["d_type"], sec["f_type"], tz_vn, is_status_only=is_status_only)
-
-                        if is_status_only and status_updates_for_live and current_date == today_str:
-                            live_status_ref.update(status_updates_for_live)
-
-                        print(f"✓ [NGÀY {current_date}] {sec['name']}: Đã tải {len(section_flights)} chuyến.")
-                        page.close()
-                        break
-                    except Exception as ex:
-                        try:
-                            page.close()
-                        except Exception:
-                            pass
-                        time.sleep(2)
-
-        browser.close()
-
-    print("=== ĐÃ HOÀN TẤT CẬP NHẬT CÁCH LY THEO NGÀY CHUẨN XÁC 100%! ===")
+    print("=== ĐÃ HOÀN TẤT CẬP NHẬT SONG SONG 4 TAB CHUẨN XÁC 100%! ===")
 
 if __name__ == "__main__":
-    scrape_viags()
+    asyncio.run(main_async())
