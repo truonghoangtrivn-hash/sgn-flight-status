@@ -94,7 +94,7 @@
             <span id="refreshText">VIAGS (D)</span>
           </button>
 
-          <!-- Nút 2: Cập nhật độc lập Flightradar24 -->
+          <!-- Nút 2: Cập nhật độc lập Flightradar24 (3 phút/lần) -->
           <button id="btnRefreshFR24" onclick="triggerRefreshFR24(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer font-mono">
             <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5 text-xs"></i>
             <span id="refreshTextFR24">RADAR FR24</span>
@@ -226,7 +226,7 @@
     let selectedDate = '';
     let nextDateStr = '';
 
-    // Khóa chống xung đột / dồn lệnh khi tự động quét
+    // Khóa chống nghẽn lệnh thông minh
     let isTodayUpdating = false;
     let isFR24Updating = false;
     let isStatusUpdating = false;
@@ -369,7 +369,6 @@
       const originalText = (statusText || 'Normal').trim();
       const upper = originalText.toUpperCase();
 
-      // Giữ nguyên 100% nội dung chữ, phối màu trang nhã chuẩn VNA Heritage
       if (upper.includes('BOARDING')) {
         return `<span class="inline-block px-3 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-950 border border-amber-400 shadow-xs">${originalText}</span>`;
       }
@@ -531,7 +530,6 @@
         const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
         const cityName = f.route || f.destination_or_from || '--';
 
-        // Phối màu sang trọng: hàng Boarding phủ ánh vàng sen VNA
         let trClass = "hover:bg-slate-50/90 transition-colors duration-150";
         if (isBoarding) {
           trClass = "vna-boarding-row font-medium";
@@ -736,7 +734,7 @@
       }
     };
 
-    // 3. Nút Cập nhật riêng cột STATUS (Chu kỳ 1 phút)
+    // 3. NÚT CẬP NHẬT STATUS (KHÓA CHỐNG NGHẼN 35S CHUẨN XÁC)
     window.triggerRefreshStatus = async (isSilent = false) => {
       const btn = document.getElementById('btnRefreshStatus');
       const icon = document.getElementById('refreshIconStatus');
@@ -755,7 +753,7 @@
         const data = await res.json();
 
         if (res.ok) {
-          let countdown = 35;
+          let countdown = 35; // Khóa 35 giây để tiến trình hoàn thành trọn vẹn, không dồn lệnh
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
@@ -812,12 +810,12 @@
       updateAutoPilotUI();
     };
 
-    // Bộ đếm nhịp tự động (Tách lệch giây tuyệt đối, không trùng thời điểm)
+    // Bộ đếm nhịp tự động (Tách lệch giây tuyệt đối, có khóa an toàn chống nghẽn)
     setInterval(() => {
       if (!autoPilotEnabled) return;
       autoSec++;
 
-      // Nhịp 1: Mỗi 1 phút (60 giây) -> Tự động quét STATUS ngày hôm nay
+      // Nhịp 1: Mỗi 1 phút (60 giây) -> Tự động quét STATUS ngày hôm nay (Nếu lượt trước đã xong)
       if (autoSec % 60 === 0) {
         if (!isStatusUpdating) {
           window.triggerRefreshStatus(true);
