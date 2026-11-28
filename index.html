@@ -7,16 +7,26 @@
   <!-- Tailwind CSS & FontAwesome Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       theme: {
         extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['Chakra Petch', 'monospace'],
+          },
           colors: {
             vna: {
               blue: '#005574',
               dark: '#002d42',
+              navy: '#001e2e',
               gold: '#e2b343',
-              light: '#f0f7fa'
+              goldLight: '#f5c862',
+              cream: '#fdfbf7',
+              lotusSoft: 'rgba(226, 179, 67, 0.16)'
             }
           }
         }
@@ -24,115 +34,128 @@
     }
   </script>
   <style>
-    /* Hiệu ứng nhấp nháy phát sáng toàn hàng cho chuyến bay BOARDING */
-    @keyframes boardingPulse {
+    /* Hiệu ứng thở êm dịu màu Vàng Hoa Sen VNA cho hàng BOARDING */
+    @keyframes vnaLotusGlow {
       0%, 100% {
-        background-color: rgba(254, 240, 138, 0.4);
+        background-color: rgba(226, 179, 67, 0.12);
       }
       50% {
-        background-color: rgba(250, 204, 21, 0.9);
+        background-color: rgba(226, 179, 67, 0.28);
       }
     }
-    .boarding-row-blink {
-      animation: boardingPulse 1.2s ease-in-out infinite;
+    .vna-boarding-row {
+      animation: vnaLotusGlow 1.8s ease-in-out infinite;
+      border-left: 4px solid #e2b343 !important;
     }
+
     /* Thanh cuộn mượt mà */
     .custom-table-scroll::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
+    .custom-table-scroll::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
     .custom-table-scroll::-webkit-scrollbar-thumb {
       background-color: #cbd5e1;
       border-radius: 4px;
     }
+    .custom-table-scroll::-webkit-scrollbar-thumb:hover {
+      background-color: #e2b343;
+    }
   </style>
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
+<body class="bg-slate-100 min-h-screen text-slate-800 font-sans antialiased selection:bg-vna-gold selection:text-vna-dark">
 
   <!-- KHUNG ĐẦU TRANG ĐƯỢC GHIM CỐ ĐỊNH (FREEZE STICKY TOP) -->
   <div class="sticky top-0 z-50 shadow-md">
     
-    <!-- 1. Header chính -->
-    <header class="bg-vna-dark text-white border-b-4 border-vna-gold">
-      <div class="max-w-7xl mx-auto px-4 py-3 sm:flex sm:items-center sm:justify-between">
-        <div class="flex items-center space-x-3">
-          <i class="fa-solid fa-plane-departure text-vna-gold text-2xl sm:text-3xl"></i>
+    <!-- 1. Header chính mang bản sắc Vietnam Airlines -->
+    <header class="bg-vna-dark text-white border-b-4 border-vna-gold px-4 py-3 sm:px-6">
+      <div class="max-w-7xl mx-auto sm:flex sm:items-center sm:justify-between">
+        <div class="flex items-center space-x-3.5">
+          <div class="w-10 h-10 rounded-xl bg-vna-navy border border-vna-gold/40 flex items-center justify-center shadow-inner">
+            <i class="fa-solid fa-plane-departure text-vna-gold text-xl"></i>
+          </div>
           <div>
-            <h1 class="text-xl sm:text-2xl font-bold tracking-tight">SGN FLIGHT MONITOR</h1>
-            <p class="text-xs text-sky-200">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS & Flightradar24</p>
+            <div class="flex items-center space-x-2">
+              <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white font-mono">SGN FLIGHT MONITOR</h1>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-vna-gold text-vna-dark font-mono tracking-wider">VNA</span>
+            </div>
+            <p class="text-xs text-sky-200 font-medium">Vietnam Airlines • Tân Sơn Nhất (SGN) • Dữ liệu VIAGS & Flightradar24</p>
           </div>
         </div>
         
-        <!-- Cụm nút Cập Nhật & Công tắc Tự động thông minh -->
-        <div class="mt-2 sm:mt-0 flex flex-wrap items-center gap-2">
+        <!-- Cụm các nút Cập Nhật & Công tắc Tự động thông minh -->
+        <div class="mt-2.5 sm:mt-0 flex flex-wrap items-center gap-2">
           <!-- Nút 1: Cập nhật hôm nay (VIAGS tổng) -->
-          <button id="btnRefresh" onclick="triggerRefreshToday(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-yellow-400 active:scale-95 transition shadow-sm cursor-pointer">
-            <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5"></i>
-            <span id="refreshText">Cập nhật VIAGS (D)</span>
+          <button id="btnRefresh" onclick="triggerRefreshToday(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-vna-goldLight active:scale-95 transition shadow-sm cursor-pointer font-mono">
+            <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5 text-xs"></i>
+            <span id="refreshText">VIAGS (D)</span>
           </button>
 
-          <!-- Nút 2: Cập nhật độc lập Flightradar24 (3 phút/lần) -->
-          <button id="btnRefreshFR24" onclick="triggerRefreshFR24(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer">
-            <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5"></i>
-            <span id="refreshTextFR24">Cập nhật FR24</span>
+          <!-- Nút 2: Cập nhật độc lập Flightradar24 -->
+          <button id="btnRefreshFR24" onclick="triggerRefreshFR24(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 text-yellow-400 hover:bg-black active:scale-95 transition shadow-sm border border-yellow-500/40 cursor-pointer font-mono">
+            <i id="refreshIconFR24" class="fa-solid fa-radar mr-1.5 text-xs"></i>
+            <span id="refreshTextFR24">RADAR FR24</span>
           </button>
 
-          <!-- Nút 3: CẬP NHẬT RIÊNG CỘT STATUS (01 PHÚT/LẦN) -->
-          <button id="btnRefreshStatus" onclick="triggerRefreshStatus(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-sky-700 text-white hover:bg-sky-800 active:scale-95 transition shadow-sm cursor-pointer">
-            <i id="refreshIconStatus" class="fa-solid fa-clock mr-1.5"></i>
-            <span id="refreshTextStatus">Cập nhật STATUS (1m)</span>
+          <!-- Nút 3: Cập nhật riêng cột STATUS (1 phút/lần) -->
+          <button id="btnRefreshStatus" onclick="triggerRefreshStatus(false)" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-blue text-white hover:bg-sky-800 active:scale-95 transition shadow-sm border border-white/20 cursor-pointer font-mono">
+            <i id="refreshIconStatus" class="fa-solid fa-clock mr-1.5 text-xs"></i>
+            <span id="refreshTextStatus">STATUS (1m)</span>
           </button>
 
-          <!-- Nút 4: Công tắc Tự động thông minh -->
-          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Tự động quét: STATUS mỗi 1 phút, FR24 mỗi 3 phút, VIAGS mỗi 10 phút" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer">
-            <span id="autoPilotDot" class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse"></span>
+          <!-- Nút 4: Công tắc Tự động thông minh 3 nhịp -->
+          <button id="btnAutoPilot" onclick="toggleAutoPilot()" title="Tự động: STATUS mỗi 1 phút, FR24 mỗi 3 phút, VIAGS mỗi 10 phút" class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono">
+            <span id="autoPilotDot" class="w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]"></span>
             <span id="autoPilotText">Tự động: BẬT</span>
           </button>
         </div>
       </div>
     </header>
 
-    <!-- 2. Thanh điều khiển Bộ lọc -->
-    <div class="bg-white/95 backdrop-blur border-b border-slate-200">
-      <div class="max-w-7xl mx-auto px-4 py-3">
+    <!-- 2. Thanh điều khiển Bộ lọc phong cách trang nhã -->
+    <div class="bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-2.5 sm:px-6">
+      <div class="max-w-7xl mx-auto">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
           
           <!-- Chọn ngày (GHI NHỚ VĨNH VIỄN) -->
           <div>
-            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-              <i class="fa-regular fa-calendar-days text-vna-blue mr-1"></i> Chọn ngày bay:
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">
+              <i class="fa-regular fa-calendar-days text-vna-blue mr-1"></i> DATE:
             </label>
-            <input type="date" id="datePicker" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
+            <input type="date" id="datePicker" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium font-mono text-slate-800 focus:ring-2 focus:ring-vna-blue focus:border-vna-blue focus:outline-none transition">
           </div>
 
           <!-- TYPE: DOM | INTL -->
           <div>
-            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-              <i class="fa-solid fa-globe text-vna-blue mr-1"></i> Type:
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">
+              <i class="fa-solid fa-globe text-vna-blue mr-1"></i> TYPE:
             </label>
-            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg">
-              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">DOM</button>
-              <button onclick="setType('International')" id="btn-type-International" class="type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">INTL</button>
+            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+              <button onclick="setType('Domestic')" id="btn-type-Domestic" class="type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer font-mono">DOM</button>
+              <button onclick="setType('International')" id="btn-type-International" class="type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono">INTL</button>
             </div>
           </div>
 
           <!-- BOUND: DEP | ARR -->
           <div>
-            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-              <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> Bound:
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">
+              <i class="fa-solid fa-arrows-split-up-and-left text-vna-blue mr-1"></i> BOUND:
             </label>
-            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg">
-              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer">DEP</button>
-              <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer">ARR</button>
+            <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+              <button onclick="setDirection('Departure')" id="btn-dir-Departure" class="dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer font-mono">DEP</button>
+              <button onclick="setDirection('Arrival')" id="btn-dir-Arrival" class="dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono">ARR</button>
             </div>
           </div>
 
           <!-- Tìm kiếm -->
           <div>
-            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-              <i class="fa-solid fa-magnifying-glass text-vna-blue mr-1"></i> Tìm kiếm:
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">
+              <i class="fa-solid fa-magnifying-glass text-vna-blue mr-1"></i> SEARCH:
             </label>
-            <input type="text" id="searchInput" placeholder="VN205, HAN, HUE..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-vna-blue focus:outline-none transition">
+            <input type="text" id="searchInput" placeholder="VN205, HAN, HUE..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm font-medium font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-vna-blue focus:border-vna-blue focus:outline-none transition">
           </div>
 
         </div>
@@ -142,39 +165,41 @@
   </div>
 
   <!-- Main Container -->
-  <main class="max-w-7xl mx-auto px-4 py-4">
+  <main class="max-w-7xl mx-auto px-3 sm:px-6 py-4">
 
     <!-- Thống kê nhanh & Trạng thái tải -->
-    <div class="flex items-center justify-between mb-2.5 px-1">
-      <div class="text-sm font-semibold text-slate-600">
-        Hiển thị: <span id="flightCount" class="text-vna-blue font-bold text-lg">0</span> chuyến bay (Chu kỳ: 03:00 D &rarr; 02:59 D+1)
+    <div class="flex items-center justify-between mb-2.5 px-1 font-mono text-xs">
+      <div class="text-slate-600 font-semibold flex items-center space-x-2">
+        <span>HIỂN THỊ: <strong id="flightCount" class="text-vna-blue text-sm font-bold">0</strong> CHUYẾN BAY</span>
+        <span class="text-slate-300">|</span>
+        <span class="text-slate-500">CA KHAI THÁC: 03:00 D &rarr; 02:59 D+1</span>
       </div>
-      <div id="loadingStatus" class="text-sm text-slate-400 flex items-center">
-        <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Đang tải dữ liệu...
+      <div id="loadingStatus" class="text-sky-700 font-semibold flex items-center">
+        <i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i> Đang đồng bộ...
       </div>
     </div>
 
-    <!-- BẢNG DANH SÁCH CHUYẾN BAY (GHIM CỐ ĐỊNH & HIGHLIGHT TIÊU ĐỀ NỔI BẬT) -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <!-- BẢNG DANH SÁCH CHUYẾN BAY VNA HERITAGE -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200/90 overflow-hidden">
       <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-215px)] custom-table-scroll">
         <table class="w-full text-left border-collapse">
           <thead id="flightsTableHead">
-            <!-- Header chuẩn tiếng Anh, ghim cố định và highlight nổi bật -->
+            <!-- Header chuẩn VNA Navy & Gold, ghim cố định trên đỉnh bảng -->
           </thead>
           <tbody id="flightsTableBody" class="divide-y divide-slate-100 text-sm">
             <!-- Render dữ liệu -->
           </tbody>
         </table>
       </div>
-      <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
+      <div id="emptyMessage" class="hidden p-12 text-center text-slate-400 font-mono">
         <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Không tìm thấy chuyến bay Vietnam Airlines nào khớp với bộ lọc.</p>
+        <p class="font-bold">Không tìm thấy chuyến bay Vietnam Airlines nào khớp với bộ lọc.</p>
       </div>
     </div>
 
   </main>
 
-  <!-- Firebase Realtime Database Web SDK & Logic Điều Hành 3 Nhịp -->
+  <!-- Firebase Realtime Database Web SDK & VNA Heritage Logic -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
@@ -233,19 +258,19 @@
 
     function updateButtonUI() {
       document.querySelectorAll('.type-btn').forEach(b => {
-        b.className = 'type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
+        b.className = 'type-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono';
       });
       const activeTypeBtn = document.getElementById(`btn-type-${currentType}`);
       if (activeTypeBtn) {
-        activeTypeBtn.className = 'type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+        activeTypeBtn.className = 'type-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer font-mono';
       }
 
       document.querySelectorAll('.dir-btn').forEach(b => {
-        b.className = 'dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer';
+        b.className = 'dir-btn py-1.5 text-xs font-bold rounded transition text-slate-600 hover:bg-white cursor-pointer font-mono';
       });
       const activeDirBtn = document.getElementById(`btn-dir-${currentDirection}`);
       if (activeDirBtn) {
-        activeDirBtn.className = 'dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer';
+        activeDirBtn.className = 'dir-btn py-1.5 text-xs font-bold rounded transition bg-vna-blue text-white shadow-sm cursor-pointer font-mono';
       }
     }
 
@@ -256,7 +281,7 @@
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    // Lắng nghe đồng thời cả 3 nhánh: daily_schedules, fr24_etas và live_statuses
+    // Lắng nghe đồng thời cả 3 nhánh độc lập
     function listenToFlights(chosenDate) {
       if (selectedDate !== chosenDate) {
         fr24MapDay1 = {};
@@ -339,6 +364,33 @@
       return flightObj.remarks || 'Normal';
     }
 
+    // ĐỊNH DẠNG BADGE TRẠNG THÁI VNA HERITAGE (GIỮ NGUYÊN VĂN 100% TỪNG CHỮ)
+    function formatVnaStatusBadge(statusText) {
+      const originalText = (statusText || 'Normal').trim();
+      const upper = originalText.toUpperCase();
+
+      // Giữ nguyên 100% nội dung chữ, phối màu trang nhã chuẩn VNA Heritage
+      if (upper.includes('BOARDING')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-950 border border-amber-400 shadow-xs">${originalText}</span>`;
+      }
+      if (upper.includes('DEPARTED') || upper.includes('LANDED') || upper.includes('ARRIVED')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs">${originalText}</span>`;
+      }
+      if (upper.includes('CHECK-IN')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-300 shadow-2xs">${originalText}</span>`;
+      }
+      if (upper.includes('WAITING')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-medium bg-amber-50/70 text-amber-800 border border-amber-200">${originalText}</span>`;
+      }
+      if (upper.includes('DELAY')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300 shadow-2xs">${originalText}</span>`;
+      }
+      if (upper.includes('LANDING') || upper.includes('APPROACH')) {
+        return `<span class="inline-block px-3 py-1 rounded-md text-xs font-bold bg-sky-100 text-sky-900 border border-sky-400 shadow-xs animate-pulse">${originalText}</span>`;
+      }
+      return `<span class="inline-block px-3 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-700 border border-slate-200">${originalText}</span>`;
+    }
+
     function renderFlights(shouldScroll = false) {
       const searchKey = document.getElementById('searchInput').value.trim().toUpperCase();
 
@@ -385,30 +437,30 @@
 
       document.getElementById('flightCount').innerText = filtered.length;
 
-      // CẬP NHẬT HEADER (FREEZE & HIGHLIGHT ĐẬM NÉT)
+      // CẬP NHẬT HEADER (FREEZE & HIGHLIGHT ĐẬM CHẤT VNA NAVY & GOLD)
       const thead = document.getElementById('flightsTableHead');
       let headerHtml = '';
 
       if (currentDirection === 'Departure') {
         headerHtml = `
-          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold">
+          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold font-mono">
             <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT NO.</th>
-            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20">DEST</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STD</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">ETD</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">GATE</th>
+            <th class="py-3 px-4 font-bold sticky top-0 bg-vna-dark z-20 text-white">DEST</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">STD</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">ETD</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">GATE</th>
             <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">STATUS</th>
           </tr>
         `;
       } else {
         headerHtml = `
-          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold">
+          <tr class="bg-vna-dark text-white uppercase text-xs tracking-wider border-b-2 border-vna-gold font-mono">
             <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20 text-yellow-300">FLT NO.</th>
-            <th class="py-3 px-4 font-extrabold sticky top-0 bg-vna-dark z-20">FROM</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">STA</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">ETA</th>
+            <th class="py-3 px-4 font-bold sticky top-0 bg-vna-dark z-20 text-white">FROM</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">STA</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">ETA</th>
             <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">Flightradar24</th>
-            <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20">BELT</th>
+            <th class="py-3 px-4 font-bold text-center sticky top-0 bg-vna-dark z-20 text-white">BELT</th>
             <th class="py-3 px-4 font-extrabold text-center sticky top-0 bg-vna-dark z-20 text-yellow-300">STATUS</th>
           </tr>
         `;
@@ -476,29 +528,20 @@
         const remUpper = finalStatus.toUpperCase();
         const isBoarding = remUpper.includes('BOARDING');
 
-        // Màu sắc huy hiệu trạng thái chuẩn phong cách sáng thanh lịch
-        let badgeColor = "bg-slate-100 text-slate-700";
-        if (remUpper.includes('DEPARTED') || remUpper.includes('ARRIVED') || remUpper.includes('LANDED')) {
-          badgeColor = "bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold";
-        } else if (remUpper.includes('DELAY') || remUpper.includes('WAITING')) {
-          badgeColor = "bg-amber-50 text-amber-700 border border-amber-200";
-        } else if (isBoarding || remUpper.includes('OPEN') || remUpper.includes('CHECK-IN')) {
-          badgeColor = "bg-amber-100 text-amber-900 border border-amber-300 font-extrabold";
-        }
-
         const flightNoClean = (f.flight_no || '').replace(/\s+/g, '');
         const cityName = f.route || f.destination_or_from || '--';
 
-        let trClass = "hover:bg-slate-50/80 transition duration-150";
+        // Phối màu sang trọng: hàng Boarding phủ ánh vàng sen VNA
+        let trClass = "hover:bg-slate-50/90 transition-colors duration-150";
         if (isBoarding) {
-          trClass = "boarding-row-blink border-l-4 border-l-amber-500 font-medium";
+          trClass = "vna-boarding-row font-medium";
         } else if (isCurrentFocus) {
-          trClass = "bg-amber-50/40 border-l-4 border-l-vna-gold hover:bg-slate-50/80 transition";
+          trClass = "bg-amber-50/50 border-l-4 border-l-vna-gold hover:bg-slate-50 transition";
         }
 
         const trId = isCurrentFocus ? 'id="currentFocusFlight"' : '';
         const timeBadge = isNextDayFlight 
-          ? `<span class="text-[11px] text-sky-600 font-semibold ml-1">(+1)</span>` 
+          ? `<span class="text-[11px] text-sky-600 font-bold ml-1 font-mono">(+1)</span>` 
           : '';
 
         const independentEta = getIndependentFr24Eta(f);
@@ -506,7 +549,7 @@
         if (independentEta !== '--') {
           fr24Cell = `
             <div class="flex items-center justify-center space-x-1.5">
-              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ dự đáp (ETA) độc lập từ Flightradar24">
+              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded-md border border-sky-300 text-xs shadow-2xs" title="Giờ dự đáp (ETA) độc lập từ Flightradar24">
                 ${independentEta}
               </span>
               <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" title="Xem radar" class="inline-flex items-center p-1 rounded text-yellow-500 hover:text-yellow-600 hover:bg-slate-100 transition">
@@ -516,33 +559,39 @@
           `;
         } else {
           fr24Cell = `
-            <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded bg-slate-900 text-yellow-400 hover:bg-black transition shadow-sm">
+            <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-md bg-slate-900 text-yellow-400 hover:bg-black transition shadow-xs font-mono">
               <i class="fa-solid fa-radar mr-1 text-[10px]"></i> Radar Live
             </a>
           `;
         }
 
+        const statusBadgeHtml = formatVnaStatusBadge(finalStatus);
+
         if (currentDirection === 'Departure') {
           rowsHtml += `
             <tr ${trId} class="${trClass}">
-              <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
-              <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${cityName}</td>
+              <td class="py-3 px-4 font-bold text-vna-blue font-mono tracking-wide whitespace-nowrap">${f.flight_no}</td>
+              <td class="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">${cityName}</td>
               <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
-              <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.gate || '--'}</span></td>
-              <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs ${badgeColor}">${finalStatus}</span></td>
+              <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600 font-bold' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
+              <td class="py-3 px-4 text-center whitespace-nowrap">
+                <span class="px-2.5 py-1 bg-slate-50 font-bold font-mono text-xs rounded-md border border-slate-200 shadow-2xs">${f.gate || '--'}</span>
+              </td>
+              <td class="py-3 px-4 text-center whitespace-nowrap">${statusBadgeHtml}</td>
             </tr>
           `;
         } else {
           rowsHtml += `
             <tr ${trId} class="${trClass}">
-              <td class="py-3 px-4 font-bold text-vna-blue whitespace-nowrap">${f.flight_no}</td>
-              <td class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${cityName}</td>
+              <td class="py-3 px-4 font-bold text-vna-blue font-mono tracking-wide whitespace-nowrap">${f.flight_no}</td>
+              <td class="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">${cityName}</td>
               <td class="py-3 px-4 text-center font-mono font-bold text-slate-800 whitespace-nowrap">${f.scheduled || '--:--'}${timeBadge}</td>
-              <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
+              <td class="py-3 px-4 text-center font-mono font-semibold ${f.estimated && f.estimated !== f.scheduled ? 'text-amber-600 font-bold' : 'text-slate-600'} whitespace-nowrap">${f.estimated || '--:--'}</td>
               <td class="py-3 px-4 text-center whitespace-nowrap">${fr24Cell}</td>
-              <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 font-bold text-xs rounded border border-slate-200">${f.belt || '--'}</span></td>
-              <td class="py-3 px-4 text-center whitespace-nowrap"><span class="px-2.5 py-1 rounded-full text-xs ${badgeColor}">${finalStatus}</span></td>
+              <td class="py-3 px-4 text-center whitespace-nowrap">
+                <span class="px-2.5 py-1 bg-slate-50 font-bold font-mono text-xs rounded-md border border-slate-200 shadow-2xs">${f.belt || '--'}</span>
+              </td>
+              <td class="py-3 px-4 text-center whitespace-nowrap">${statusBadgeHtml}</td>
             </tr>
           `;
         }
@@ -608,14 +657,14 @@
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
-              text.innerText = `Cào VIAGS... (${countdown}s)`;
+              text.innerText = `VIAGS... (${countdown}s)`;
             } else {
               clearInterval(timer);
               btn.disabled = false;
               isTodayUpdating = false;
               btn.classList.remove('opacity-75', 'cursor-not-allowed');
               icon.classList.remove('fa-spin');
-              text.innerText = 'Cập nhật VIAGS (D)';
+              text.innerText = 'VIAGS (D)';
             }
           }, 1000);
         } else {
@@ -624,7 +673,7 @@
           isTodayUpdating = false;
           btn.classList.remove('opacity-75', 'cursor-not-allowed');
           icon.classList.remove('fa-spin');
-          text.innerText = 'Cập nhật VIAGS (D)';
+          text.innerText = 'VIAGS (D)';
         }
       } catch (err) {
         if (!isSilent) alert('Lỗi kết nối máy chủ!');
@@ -632,7 +681,7 @@
         isTodayUpdating = false;
         btn.classList.remove('opacity-75', 'cursor-not-allowed');
         icon.classList.remove('fa-spin');
-        text.innerText = 'Cập nhật VIAGS (D)';
+        text.innerText = 'VIAGS (D)';
       }
     };
 
@@ -659,14 +708,14 @@
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
-              text.innerText = `Quét FR24... (${countdown}s)`;
+              text.innerText = `FR24... (${countdown}s)`;
             } else {
               clearInterval(timer);
               btn.disabled = false;
               isFR24Updating = false;
               btn.classList.remove('opacity-75', 'cursor-not-allowed');
               icon.classList.remove('fa-spin');
-              text.innerText = 'Cập nhật FR24';
+              text.innerText = 'RADAR FR24';
             }
           }, 1000);
         } else {
@@ -675,7 +724,7 @@
           isFR24Updating = false;
           btn.classList.remove('opacity-75', 'cursor-not-allowed');
           icon.classList.remove('fa-spin');
-          text.innerText = 'Cập nhật FR24';
+          text.innerText = 'RADAR FR24';
         }
       } catch (err) {
         if (!isSilent) alert('Lỗi kết nối máy chủ!');
@@ -683,11 +732,11 @@
         isFR24Updating = false;
         btn.classList.remove('opacity-75', 'cursor-not-allowed');
         icon.classList.remove('fa-spin');
-        text.innerText = 'Cập nhật FR24';
+        text.innerText = 'RADAR FR24';
       }
     };
 
-    // 3. NÚT CẬP NHẬT RIÊNG CỘT STATUS (CHU KỲ 01 PHÚT)
+    // 3. Nút Cập nhật riêng cột STATUS (Chu kỳ 1 phút)
     window.triggerRefreshStatus = async (isSilent = false) => {
       const btn = document.getElementById('btnRefreshStatus');
       const icon = document.getElementById('refreshIconStatus');
@@ -710,14 +759,14 @@
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
-              text.innerText = `STATUS... (${countdown}s)`;
+              text.innerText = `STATUS (${countdown}s)`;
             } else {
               clearInterval(timer);
               btn.disabled = false;
               isStatusUpdating = false;
               btn.classList.remove('opacity-75', 'cursor-not-allowed');
               icon.classList.remove('fa-spin');
-              text.innerText = 'Cập nhật STATUS (1m)';
+              text.innerText = 'STATUS (1m)';
             }
           }, 1000);
         } else {
@@ -726,7 +775,7 @@
           isStatusUpdating = false;
           btn.classList.remove('opacity-75', 'cursor-not-allowed');
           icon.classList.remove('fa-spin');
-          text.innerText = 'Cập nhật STATUS (1m)';
+          text.innerText = 'STATUS (1m)';
         }
       } catch (err) {
         if (!isSilent) alert('Lỗi kết nối máy chủ!');
@@ -734,7 +783,7 @@
         isStatusUpdating = false;
         btn.classList.remove('opacity-75', 'cursor-not-allowed');
         icon.classList.remove('fa-spin');
-        text.innerText = 'Cập nhật STATUS (1m)';
+        text.innerText = 'STATUS (1m)';
       }
     };
 
@@ -747,11 +796,11 @@
       const txt = document.getElementById('autoPilotText');
 
       if (autoPilotEnabled) {
-        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer";
-        dot.className = "w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse";
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 active:scale-95 transition cursor-pointer font-mono";
+        dot.className = "w-2 h-2 mr-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_#34d399]";
         txt.innerText = "Tự động: BẬT";
       } else {
-        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer";
+        btn.className = "inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600 hover:bg-slate-700 active:scale-95 transition cursor-pointer font-mono";
         dot.className = "w-2 h-2 mr-2 bg-slate-400 rounded-full";
         txt.innerText = "Tự động: TẮT";
       }
