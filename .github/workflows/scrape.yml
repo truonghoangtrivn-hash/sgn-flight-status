@@ -11,7 +11,7 @@ on:
         required: false
         default: 'both_days'
 
-# Không bao giờ hủy ngang tiến trình đang chạy (cancel-in-progress: false)
+# Không bao giờ hủy ngang tiến trình đang chạy
 concurrency:
   group: scrape-${{ github.event.inputs.mode || 'scheduled_auto' }}
   cancel-in-progress: false
@@ -28,12 +28,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies (Siêu tốc khi quét FR24)
+      - name: Install dependencies (Cài gói lệnh siêu tốc)
         run: |
-          if [ "${{ github.event.inputs.mode }}" = "fr24_only" ]; then
-            pip install firebase-admin pytz
-          else
-            pip install playwright firebase-admin pytz
+          pip install playwright firebase-admin pytz
+          # Chỉ tải trình duyệt nặng Chromium khi cào VIAGS, bỏ qua khi quét FR24
+          if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
             playwright install chromium
           fi
 
