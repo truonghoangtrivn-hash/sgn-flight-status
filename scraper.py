@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 import firebase_admin
 from firebase_admin import credentials, db
 
-# Đường dẫn Realtime Database mới (Không giới hạn 50K lượt đọc)
+# Đường dẫn Realtime Database
 RTDB_URL = "https://sgn-flight-status-default-rtdb.asia-southeast1.firebasedatabase.app"
 
 # 1. Khởi tạo kết nối Firebase Realtime Database
@@ -46,11 +46,7 @@ def is_valid_arrival_eta(eta_str, sta_str):
 def fetch_flight_eta_from_fr24(flight_no, flight_date_str, scheduled_time_str):
     clean_no = flight_no.replace(" ", "").upper()
     tz_vn = pytz.timezone('Asia/Ho_Chi_Minh')
-
-    try:
-        target_sched_dt = tz_vn.localize(datetime.strptime(f"{flight_date_str} {scheduled_time_str}", "%Y-%m-%d %H:%M"))
-    except Exception:
-        target_sched_dt = None
+    now_vn = datetime.now(tz_vn)
 
     queries = [clean_no]
     if clean_no.startswith("VN"):
@@ -79,12 +75,11 @@ def fetch_flight_eta_from_fr24(flight_no, flight_date_str, scheduled_time_str):
                             continue
 
                         status_obj = item.get("status", {})
-                        is_live = status_obj.get("live", False) is True
+                        is_live = bool(status_obj.get("live", False))
                         raw_status_text = (status_obj.get("text") or "").strip()
                         status_upper = raw_status_text.upper()
 
                         time_info = item.get("time", {})
-                        sched_arr = time_info.get("scheduled", {}).get("arrival")
                         real_dep = time_info.get("real", {}).get("departure")
                         real_arr = time_info.get("real", {}).get("arrival")
                         est_arr = time_info.get("estimated", {}).get("arrival")
@@ -93,27 +88,17 @@ def fetch_flight_eta_from_fr24(flight_no, flight_date_str, scheduled_time_str):
                         if real_arr is not None or any(w in status_upper for w in ["LANDED", "ARRIVED", "CANCELED", "CANCELLED", "DIVERTED"]):
                             continue
 
-                        # 3. Kiểm tra khớp ngày kế hoạch (không lấy chuyến của ngày khác)
-                        if sched_arr and target_sched_dt:
-                            item_dt = datetime.fromtimestamp(sched_arr, tz_vn)
-                            if abs((item_dt - target_sched_dt).total_seconds()) > 5 * 3600:
-                                continue
-
-                        # 4. QUY TẮC 3: Máy bay BẮT BUỘC phải đang bay trên trời (LIVE hoặc đã cất cánh thực tế)
-                        is_airborne = is_live or (real_dep is not None and real_arr is None)
+                        # 3. QUY TẮC 3: Máy bay BẮT BUỘC phải đang bay (LIVE hoặc đã cất cánh hoặc đang có Estimated arrival)
+                        has_est_arrival_text = "ESTIMATED ARRIVAL" in status_upper
+                        is_airborne = is_live or (real_dep is not None and real_arr is None) or has_est_arrival_text
                         if not is_airborne:
                             continue
 
-                        # 5. QUY TẮC 4: CHỈ LẤY GIỜ DỰ ĐÁP (ETA), TUYỆT ĐỐI KHÔNG LẤY ETD
+                        # 4. QUY TẮC 4: CHỈ LẤY GIỜ DỰ ĐÁP (ETA), TUYỆT ĐỐI KHÔNG LẤY ETD
                         candidate_eta = None
 
-                        # Ưu tiên A: Lấy từ trường timestamp dự đáp (time.estimated.arrival)
-                        if est_arr:
-                            dt = datetime.fromtimestamp(est_arr, tz_vn)
-                            candidate_eta = dt.strftime('%H:%M')
-
-                        # Ưu tiên B: Lấy từ dòng chữ có ghi rõ "Estimated arrival HH:MM"
-                        if not candidate_eta and "DEPARTURE" not in status_upper:
+                        # Ưu tiên A: Lấy từ dòng chữ ghi rõ "Estimated arrival HH:MM" trên FR24
+                        if has_est_arrival_text:
                             match_arr = re.search(r'estimated\s+arrival\s*[:\s•]*(\d{1,2}:\d{2}\s*(?:AM|PM)?)', raw_status_text, re.I)
                             if match_arr:
                                 t_str = match_arr.group(1).strip()
@@ -122,6 +107,13 @@ def fetch_flight_eta_from_fr24(flight_no, flight_date_str, scheduled_time_str):
                                     candidate_eta = t_obj.strftime("%H:%M")
                                 except Exception:
                                     candidate_eta = t_str
+
+                        # Ưu tiên B: Lấy từ trường timestamp dự đáp (time.estimated.arrival)
+                        if not candidate_eta and est_arr:
+                            est_dt = datetime.fromtimestamp(est_arr, tz_vn)
+                            # Phải là chuyến bay có giờ dự đáp trong hiện tại/tương lai (không lấy chuyến cũ của ngày hôm qua)
+                            if est_dt >= (now_vn - timedelta(minutes=30)):
+                                candidate_eta = est_dt.strftime('%H:%M')
 
                         if candidate_eta and is_valid_arrival_eta(candidate_eta, scheduled_time_str):
                             return candidate_eta
@@ -156,7 +148,7 @@ def is_flight_after_now(f, now_vn):
     latest_milestone = max(candidates)
     return latest_milestone > now_vn
 
-# Đọc danh sách chuyến bay của 1 ngày từ Realtime Database
+# Đọc danh sách chuyến bay VIAGS từ ngăn chứa 1 (daily_schedules)
 def load_day_flights(d):
     ref = db.reference(f"daily_schedules/{d}")
     data = ref.get()
@@ -164,8 +156,8 @@ def load_day_flights(d):
         return data.get("flights", [])
     return []
 
-# Lưu danh sách chuyến bay của 1 ngày vào Realtime Database
-def save_day_flights(d, flights_list, tz_vn):
+# Lưu danh sách chuyến bay VIAGS vào ngăn chứa 1 (daily_schedules) - KHÔNG ĐỤNG TỚI NGĂN FR24
+def save_viags_day_flights(d, flights_list, tz_vn):
     ref = db.reference(f"daily_schedules/{d}")
     ref.set({
         "date": d,
@@ -196,67 +188,67 @@ def scrape_viags():
     scrape_mode = os.environ.get("SCRAPE_MODE", "both_days")
 
     # =========================================================================
-    # CHẾ ĐỘ ĐỘC LẬP: CHỈ CẬP NHẬT CỘT FLIGHTRADAR24 (CHẠY SIÊU TỐC 30 GIÂY)
+    # CHỨC NĂNG ĐỘC LẬP: CHỈ CẬP NHẬT NGĂN CHỨA 2 (fr24_etas)
     # =========================================================================
     if scrape_mode == "fr24_only":
         print(f"=======================================================")
-        print(f" >>> CẬP NHẬT ĐỘC LẬP CỘT FLIGHTRADAR24 THEO 4 QUY TẮC <<<")
+        print(f" >>> CẬP NHẬT ĐỘC LẬP NGĂN FLIGHTRADAR24 (fr24_etas) <<<")
         print(f" Giờ hiện tại (VN): {now_vn.strftime('%Y-%m-%d %H:%M')}")
         print(f"=======================================================")
 
         for d in target_dates:
             flights_list = load_day_flights(d)
             if not flights_list:
-                print(f"Ngày {d} chưa có dữ liệu trong Realtime Database. Hãy bấm 'Cập nhật hôm nay (D)' trước.")
+                print(f"Ngày {d} chưa có danh sách VIAGS.")
                 continue
 
-            updated = False
+            # Đọc dữ liệu FR24 hiện có trong ngăn độc lập fr24_etas/{d}
+            fr24_ref = db.reference(f"fr24_etas/{d}")
+            current_fr24_map = fr24_ref.get()
+            if not isinstance(current_fr24_map, dict):
+                current_fr24_map = {}
+
+            updated_count = 0
+            checked_count = 0
+
             for f in flights_list:
                 if f.get("direction") == "Arrival":
-                    old_val = f.get("fr24_eta", "--")
+                    f_no = f.get("flight_no", "").replace(" ", "").upper()
                     sta_str = f.get("scheduled", "--:--")
                     rem_upper = (f.get("remarks") or "").upper()
 
-                    # Xóa giờ cũ không hợp lệ hoặc chuyến đã đáp
-                    if old_val != "--":
-                        if "LANDED" in rem_upper or "ARRIVED" in rem_upper or not is_valid_arrival_eta(old_val, sta_str):
-                            f["fr24_eta"] = "--"
-                            old_val = "--"
-                            updated = True
-
-                    # Quy tắc 1: Chỉ quét chuyến có Max(STA, ETA) sau giờ hiện tại và chưa đáp
+                    # Quy tắc 1: Chỉ quét các chuyến bay có Max(STA, ETA) sau giờ hiện tại
                     if "LANDED" not in rem_upper and is_flight_after_now(f, now_vn):
-                        eta = fetch_flight_eta_from_fr24(f["flight_no"], f["date"], sta_str)
-                        if eta != old_val:
-                            f["fr24_eta"] = eta
-                            updated = True
-                        if eta != "--":
-                            print(f"   -> [ĐANG BAY - ETA DỰ ĐÁP] {f['flight_no']} ({f.get('route', '')} | STA {sta_str}): {eta}")
+                        checked_count += 1
+                        eta = fetch_flight_eta_from_fr24(f_no, f["date"], sta_str)
+                        if eta and eta != "--":
+                            current_fr24_map[f_no] = eta
+                            updated_count += 1
+                            print(f"   -> [ĐANG BAY - ETA DỰ ĐÁP] {f_no} ({f.get('route', '')} | STA {sta_str}): {eta}")
                         time.sleep(0.35)
 
-            if updated:
-                save_day_flights(d, flights_list, tz_vn)
-                print(f"✓ Đã cập nhật & lưu cột Flightradar24 cho ngày {d}!")
-            else:
-                print(f"✓ Ngày {d}: Không có thay đổi ETA mới.")
+            # Lưu trực tiếp vào ngăn độc lập fr24_etas/{d}
+            if current_fr24_map:
+                fr24_ref.set(current_fr24_map)
+            print(f"✓ Ngày {d}: Đã kiểm tra {checked_count} chuyến chưa đáp, cập nhật {updated_count} chuyến đang bay vào ngăn fr24_etas/{d}!")
 
         print("=== HOÀN TẤT CẬP NHẬT ĐỘC LẬP FLIGHTRADAR24 ===")
         return
 
     # =========================================================================
-    # PHẦN MỀM CHÍNH: CÀO VIAGS (CÓ AUTO-RETRY 3 LẦN & BẢO TOÀN CỘT FR24)
+    # PHẦN MỀM CHÍNH: CHỈ CẬP NHẬT NGĂN CHỨA 1 (daily_schedules)
+    # TUYỆT ĐỐI KHÔNG ĐỤNG CHẠM TỚI NGĂN fr24_etas!
     # =========================================================================
     if scrape_mode == "today_only":
-        # Nếu ngày mai (D+1) chưa có trong kho mới thì tự động lấy luôn để đủ chu kỳ 03:00 D -> 02:59 D+1
         if not load_day_flights(tomorrow_str):
             scrape_dates = [today_str, tomorrow_str]
-            print(f">>> [KHỞI TẠO KHO MỚI]: Cào cả {today_str} và {tomorrow_str} để đủ chu kỳ 03:00 D -> 02:59 D+1 <<<")
+            print(f">>> [PHẦN MỀM CHÍNH]: Cào cả {today_str} và {tomorrow_str} vào daily_schedules <<<")
         else:
             scrape_dates = [today_str]
-            print(f">>> [PHẦN MỀM CHÍNH]: CHỈ CẬP NHẬT VIAGS NGÀY HÔM NAY ({today_str}) <<<")
+            print(f">>> [PHẦN MỀM CHÍNH]: Chỉ cập nhật VIAGS ngày {today_str} vào daily_schedules <<<")
     else:
         scrape_dates = [today_str, tomorrow_str]
-        print(f">>> [PHẦN MỀM CHÍNH]: CẬP NHẬT VIAGS CẢ 2 NGÀY ({scrape_dates}) <<<")
+        print(f">>> [PHẦN MỀM CHÍNH]: Cập nhật VIAGS 2 ngày ({scrape_dates}) vào daily_schedules <<<")
 
     all_flights_by_date = {d: [] for d in scrape_dates}
 
@@ -391,9 +383,7 @@ def scrape_viags():
                                     "remarks": remarks,
                                     "flight_type": sec["f_type"],
                                     "direction": sec["d_type"],
-                                    "airport": "SGN",
-                                    "fr24_url": f"https://www.flightradar24.com/data/flights/{flight_no}",
-                                    "fr24_eta": "--"
+                                    "airport": "SGN"
                                 }
                                 all_flights_by_date[current_date].append(flight_item)
                                 section_vna += 1
@@ -411,27 +401,14 @@ def scrape_viags():
 
         browser.close()
 
-    # QUY TẮC 2: LƯU VIAGS VÀO REALTIME DATABASE NHƯNG BẢO TOÀN 100% CỘT FLIGHTRADAR24 ĐỘC LẬP
+    # LƯU RIÊNG VÀO NGĂN daily_schedules (KHÔNG BAO GIỜ ĐỤNG TỚI NGĂN fr24_etas)
     print(f"\n=======================================================")
-    print(f" LƯU VIAGS VÀO REALTIME DATABASE & BẢO TOÀN CỘT FR24")
+    print(f" LƯU VIAGS VÀO NGĂN daily_schedules (ĐỘC LẬP 100% VỚI FR24)")
     print(f"=======================================================")
     for d, flights_list in all_flights_by_date.items():
         if len(flights_list) > 0:
-            existing_flights = load_day_flights(d)
-            existing_fr24_map = {}
-            for old_f in existing_flights:
-                if old_f.get("direction") == "Arrival":
-                    old_eta = old_f.get("fr24_eta", "--")
-                    old_sta = old_f.get("scheduled", "--:--")
-                    if old_eta and old_eta != "--" and is_valid_arrival_eta(old_eta, old_sta):
-                        existing_fr24_map[old_f.get("flight_no")] = old_eta
-
-            for f in flights_list:
-                if f["direction"] == "Arrival" and f["flight_no"] in existing_fr24_map:
-                    f["fr24_eta"] = existing_fr24_map[f["flight_no"]]
-
-            save_day_flights(d, flights_list, tz_vn)
-            print(f"✓ Đã lưu thành công {len(flights_list)} chuyến bay ngày {d} vào Realtime Database!")
+            save_viags_day_flights(d, flights_list, tz_vn)
+            print(f"✓ Đã lưu thành công {len(flights_list)} chuyến bay ngày {d} vào daily_schedules!")
 
     print("=== ĐÃ HOÀN TẤT CẬP NHẬT PHẦN MỀM CHÍNH! ===")
 
