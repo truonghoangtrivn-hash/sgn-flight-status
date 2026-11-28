@@ -42,7 +42,7 @@ def is_valid_arrival_eta(eta_str, sta_str):
     except Exception:
         return True
 
-# TẦNG 1A: Quét bản đồ bầu trời
+# TẦNG 1A: Quét bản đồ bầu trời (Chỉ lấy máy bay ĐANG BAY trên không trung về SGN)
 def get_airborne_flights_to_sgn():
     airborne_map = {}
     headers = {
@@ -71,9 +71,9 @@ def get_airborne_flights_to_sgn():
                         on_ground = info[14]
                         altitude = info[4] if isinstance(info[4], (int, float)) else 0
 
-                        if on_ground == 1 and altitude <= 0:
+                        if on_ground == 1 or altitude <= 0:
                             continue
-                        if dest and dest != "SGN":
+                        if dest != "SGN":
                             continue
 
                         iata_no = str(info[13] or "").upper().replace(" ", "").strip()
@@ -118,13 +118,13 @@ def find_live_flight_id_via_search(flight_no):
                             cs_code = (detail.get("callsign") or "").upper().replace(" ", "").strip()
                             label = (item.get("label") or "").upper().replace(" ", "").strip()
 
-                            if (not schd_to or schd_to == "SGN") and (f_code == clean_no or cs_code == callsign_no or clean_no in label or callsign_no in label):
+                            if schd_to == "SGN" and (f_code == clean_no or cs_code == callsign_no or clean_no in label or callsign_no in label):
                                 return item.get("id")
         except Exception:
             pass
     return None
 
-# Lấy chính xác GIỜ DỰ ĐÁP (ETA) qua flight_id
+# Lấy chính xác GIỜ DỰ ĐÁP (ETA) và THỜI ĐIỂM ĐÁP (arr_dt) qua flight_id
 def fetch_airborne_eta_by_id(flight_id, flight_no):
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     headers = {
@@ -145,15 +145,20 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
                     return "--", None
 
                 status_obj = data.get("status", {})
+                is_live = bool(status_obj.get("live", False))
                 raw_status_text = (status_obj.get("text") or "").strip()
                 status_upper = raw_status_text.upper()
 
                 time_info = data.get("time", {})
+                real_dep = time_info.get("real", {}).get("departure")
                 real_arr = time_info.get("real", {}).get("arrival")
                 est_arr = time_info.get("estimated", {}).get("arrival")
                 sched_arr = time_info.get("scheduled", {}).get("arrival")
 
+                # Nếu đã hạ cánh hoặc chưa hề cất cánh thì bỏ qua
                 if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
+                    return "--", None
+                if not is_live and real_dep is None:
                     return "--", None
 
                 arr_dt = None
@@ -166,7 +171,7 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
                     dt = datetime.fromtimestamp(est_arr, tz_vn)
                     return dt.strftime("%H:%M"), arr_dt
 
-                if "ESTIMATED ARRIVAL" in status_upper:
+                if "ESTIMATED ARRIVAL" in status_upper and arr_dt is not None:
                     match_arr = re.search(r"estimated\s+arrival\s*[:\s•]*(\d{1,2}:\d{2}\s*(?:AM|PM)?)", raw_status_text, re.I)
                     if match_arr:
                         t_str = match_arr.group(1).strip()
@@ -180,7 +185,7 @@ def fetch_airborne_eta_by_id(flight_id, flight_no):
 
     return "--", None
 
-# TẦNG 3: Kiểm tra qua cổng list.json
+# TẦNG 3: Kiểm tra qua cổng list.json (Chỉ lấy chuyến bay thực sự ĐANG BAY)
 def fetch_live_eta_via_list_api(flight_no):
     clean_no = flight_no.replace(" ", "").upper()
     callsign_no = clean_no.replace("VN", "HVN", 1) if clean_no.startswith("VN") else clean_no
@@ -218,10 +223,13 @@ def fetch_live_eta_via_list_api(flight_no):
                         if real_arr is not None or "LANDED" in status_upper or "ARRIVED" in status_upper:
                             continue
 
-                        if not (is_live or (real_dep is not None and real_arr is None) or "ESTIMATED ARRIVAL" in status_upper):
+                        # BẮT BUỘC máy bay phải đang LIVE hoặc đã có giờ cất cánh thực tế (real_dep)
+                        if not (is_live or (real_dep is not None and real_arr is None)):
                             continue
 
                         arr_dt = datetime.fromtimestamp(sched_arr or est_arr, tz_vn) if (sched_arr or est_arr) else None
+                        if arr_dt is None:
+                            continue
 
                         if est_arr:
                             dt = datetime.fromtimestamp(est_arr, tz_vn)
@@ -240,6 +248,7 @@ def fetch_live_eta_via_list_api(flight_no):
             pass
     return "--", None
 
+# KHÓA CỬA SỔ THỜI GIAN THỰC TẾ: Chặn tuyệt đối các chuyến bay ngày mai chưa tới giờ cất cánh
 def is_flight_candidate_for_live_check(f, now_vn):
     tz_vn = pytz.timezone("Asia/Ho_Chi_Minh")
     f_date = f.get("date", "")
@@ -262,7 +271,9 @@ def is_flight_candidate_for_live_check(f, now_vn):
         return False, None
 
     latest_milestone = max(candidates)
-    max_lookahead_hours = 4.5 if f_type == "DOMESTIC" else 16.0
+    # Quốc nội bay tối đa ~2h15p -> chỉ mở cửa sổ trước giờ đáp 3.5 tiếng
+    # Quốc tế bay đường dài -> mở cửa sổ trước giờ đáp tối đa 14 tiếng
+    max_lookahead_hours = 3.5 if f_type == "DOMESTIC" else 14.0
     is_eligible = (now_vn - timedelta(hours=4)) <= latest_milestone <= (now_vn + timedelta(hours=max_lookahead_hours))
     return is_eligible, latest_milestone
 
@@ -273,13 +284,22 @@ def load_day_flights(d):
         return data.get("flights", [])
     return []
 
-# ĐỌC NHÁNH ĐỘC LẬP THEO TỪNG NGÀY RIÊNG BIỆT (TUYỆT ĐỐI KHÔNG DÙNG CHUNG)
 def load_live_statuses(d):
     ref = db.reference(f"live_statuses/{d}")
     data = ref.get()
     if data and isinstance(data, dict):
         return data
     return {}
+
+# LÀM SẠCH TRẠNG THÁI (STATUS) BỊ RÒ RỈ SANG NGÀY TƯƠNG LAI
+def sanitize_future_remark(remarks, sec_direction):
+    curr_rem = (remarks or "Normal").strip()
+    curr_upper = curr_rem.upper()
+    invalid_future_keywords = ["DEPARTED", "LANDED", "ARRIVED", "ARRIVAL", "BOARDING", "GATE CLOSED", "FINAL CALL", "APPROACH", "LANDING"]
+    for kw in invalid_future_keywords:
+        if kw in curr_upper:
+            return "Check-in open" if sec_direction == "Departure" else "Normal"
+    return curr_rem
 
 # CẬP NHẬT TỪNG MỤC: CÓ KHÓA KIỂM TRA THỜI GIAN THỰC
 def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight_type, tz_vn, is_status_only=False):
@@ -291,6 +311,7 @@ def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight
 
     live_status_map = load_live_statuses(d)
     now_vn = datetime.now(tz_vn)
+    today_str = now_vn.strftime("%Y-%m-%d")
 
     if is_status_only:
         new_status_map = {f.get("flight_no"): f.get("remarks") for f in section_flights if f.get("flight_no")}
@@ -322,28 +343,26 @@ def update_section_flights_cleanly(d, section_flights, sec_direction, sec_flight
     ]
 
     cleaned_new_flights = []
+    is_future_date = (d > today_str)
+
     for f in section_flights:
         f_no = (f.get("flight_no") or "").replace(" ", "").upper()
         sched_str = f.get("scheduled", "--:--")
 
-        is_future_date = (d > now_vn.strftime("%Y-%m-%d"))
-        
-        prior_status = live_status_map.get(f_no)
-        if prior_status and not is_future_date:
-            try:
-                flight_sched_dt = tz_vn.localize(datetime.strptime(f"{d} {sched_str}", "%Y-%m-%d %H:%M"))
-                if flight_sched_dt <= now_vn:
-                    if sec_direction == "Departure" and "DEPARTED" in prior_status.upper():
-                        f["remarks"] = prior_status
-                    elif sec_direction == "Arrival" and "LANDED" in prior_status.upper():
-                        f["remarks"] = prior_status
-            except Exception:
-                pass
-
         if is_future_date:
-            curr_rem = (f.get("remarks") or "").strip().upper()
-            if "DEPARTED" in curr_rem or "LANDED" in curr_rem:
-                f["remarks"] = "Check-in open" if sec_direction == "Departure" else "Normal"
+            f["remarks"] = sanitize_future_remark(f.get("remarks"), sec_direction)
+        else:
+            prior_status = live_status_map.get(f_no)
+            if prior_status:
+                try:
+                    flight_sched_dt = tz_vn.localize(datetime.strptime(f"{d} {sched_str}", "%Y-%m-%d %H:%M"))
+                    if flight_sched_dt <= now_vn:
+                        if sec_direction == "Departure" and "DEPARTED" in prior_status.upper():
+                            f["remarks"] = prior_status
+                        elif sec_direction == "Arrival" and "LANDED" in prior_status.upper():
+                            f["remarks"] = prior_status
+                except Exception:
+                    pass
 
         cleaned_new_flights.append(f)
 
@@ -369,13 +388,14 @@ def cleanup_old_data(now_vn):
         except Exception:
             pass
 
-# HÀM QUÉT ĐỘC LẬP 3 TẦNG FLIGHTRADAR24
+# HÀM QUÉT ĐỘC LẬP 3 TẦNG FLIGHTRADAR24 + TỰ ĐỘNG DỌN RÁC RÒ RỈ SANG NGÀY MAI
 def run_fr24_cumulative_update(target_dates, now_vn):
     print(f"\n=======================================================")
     print(f" >>> QUÉT 3 TẦNG MỌI CHUYẾN BAY ĐANG LIVE TRÊN FR24 <<<")
     print(f" Thời điểm quét (VN): {now_vn.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"=======================================================")
 
+    today_str = now_vn.strftime("%Y-%m-%d")
     airborne_map = get_airborne_flights_to_sgn()
     print(f"✓ [TẦNG 1 - BẦU TRỜI]: Phát hiện {len(airborne_map)} máy bay đang bay: {list(airborne_map.keys())}")
 
@@ -393,6 +413,39 @@ def run_fr24_cumulative_update(target_dates, now_vn):
             continue
 
         fr24_ref = db.reference(f"fr24_etas/{d}")
+        existing_etas = fr24_ref.get()
+        if not isinstance(existing_etas, dict):
+            existing_etas = {}
+
+        # BƯỚC DỌN RÁC: Xóa ngay mọi ETA bị lưu nhầm vào các chuyến bay chưa tới khung giờ bay
+        cleaned_etas = dict(existing_etas)
+        removed_stale_count = 0
+
+        for f in flights_list:
+            if f.get("direction") == "Arrival":
+                f_no = (f.get("flight_no") or "").replace(" ", "").upper()
+                is_eligible, _ = is_flight_candidate_for_live_check(f, now_vn)
+                if not is_eligible and f_no in cleaned_etas:
+                    del cleaned_etas[f_no]
+                    removed_stale_count += 1
+
+        if removed_stale_count > 0:
+            fr24_ref.set(cleaned_etas)
+            print(f"🧹 [DỌN RÁC FR24 - NGÀY {d}]: Đã xóa {removed_stale_count} giờ FR24 ảo của các chuyến bay chưa cất cánh!")
+
+        # Đồng thời nếu là ngày tương lai, sửa luôn chữ "Arrival" / "Landed" bị dính trong daily_schedules
+        if d > today_str:
+            schedule_fixed = False
+            for f in flights_list:
+                old_r = f.get("remarks", "Normal")
+                new_r = sanitize_future_remark(old_r, f.get("direction", "Arrival"))
+                if new_r != old_r:
+                    f["remarks"] = new_r
+                    schedule_fixed = True
+            if schedule_fixed:
+                db.reference(f"daily_schedules/{d}/flights").set(flights_list)
+                print(f"🧹 [DỌN RÁC STATUS - NGÀY {d}]: Đã reset các trạng thái Arrival/Landed/Departed bị dính sang ngày tương lai!")
+
         updated_count = 0
 
         for f in flights_list:
@@ -405,7 +458,7 @@ def run_fr24_cumulative_update(target_dates, now_vn):
                     continue
 
                 is_eligible, f_milestone_dt = is_flight_candidate_for_live_check(f, now_vn)
-                if not is_eligible:
+                if not is_eligible or f_milestone_dt is None:
                     continue
 
                 eta_val = "--"
@@ -425,8 +478,13 @@ def run_fr24_cumulative_update(target_dates, now_vn):
                     time.sleep(0.15)
 
                 if eta_val and eta_val != "--" and is_valid_arrival_eta(eta_val, sta_str):
-                    if live_arr_dt and f_milestone_dt:
-                        if abs((live_arr_dt - f_milestone_dt).total_seconds()) > 10 * 3600:
+                    # KHÓA CHỐNG RÒ RỈ NGÀY TƯƠNG LAI:
+                    # Nếu đang xét ngày mai (d > today_str), BẮT BUỘC phải có live_arr_dt xác thực từ FR24
+                    if d > today_str and live_arr_dt is None:
+                        continue
+                    # Nếu có live_arr_dt, thời điểm đáp thực tế của FR24 không được lệch quá 6 tiếng so với giờ STA của ngày đang xét
+                    if live_arr_dt is not None:
+                        if abs((live_arr_dt - f_milestone_dt).total_seconds()) > 6 * 3600:
                             continue
 
                     fr24_ref.update({f_no: eta_val})
@@ -461,6 +519,7 @@ def scrape_viags():
     try:
         db.reference(f"live_statuses/{tomorrow_str}").delete()
         db.reference(f"live_statuses/{day_after_str}").delete()
+        db.reference(f"fr24_etas/{day_after_str}").delete()
     except Exception:
         pass
 
@@ -647,9 +706,7 @@ def scrape_viags():
                                             status_updates_for_live[flight_no] = remarks
                                             current_live_statuses[flight_no] = remarks
                                 else:
-                                    rem_up = remarks.upper()
-                                    if "DEPARTED" in rem_up or "LANDED" in rem_up:
-                                        remarks = "Check-in open" if direction_upper == "DEPARTURE" else "Normal"
+                                    remarks = sanitize_future_remark(remarks, sec["d_type"])
 
                                 flight_item = {
                                     "date": current_date,
