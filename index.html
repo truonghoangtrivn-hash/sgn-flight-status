@@ -56,7 +56,7 @@
         
         <!-- Cụm nút Cập Nhật & Trạng thái -->
         <div class="mt-2 sm:mt-0 flex items-center space-x-2">
-          <!-- Nút Cập nhật hôm nay (VIAGS) -->
+          <!-- Nút Cập nhật hôm nay (Phần mềm chính VIAGS) -->
           <button id="btnRefresh" onclick="triggerRefreshToday()" class="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-vna-gold text-slate-900 hover:bg-yellow-400 active:scale-95 transition shadow-sm cursor-pointer">
             <i id="refreshIcon" class="fa-solid fa-arrows-rotate mr-1.5"></i>
             <span id="refreshText">Cập nhật hôm nay (D)</span>
@@ -151,13 +151,13 @@
       </div>
       <div id="emptyMessage" class="hidden p-12 text-center text-slate-400">
         <i class="fa-solid fa-plane-slash text-4xl mb-3 text-slate-300"></i>
-        <p class="font-medium">Chưa có dữ liệu cho ngày này. Hãy bấm nút "Cập nhật hôm nay (D)" ở góc trên bên phải để nạp dữ liệu vào kho mới!</p>
+        <p class="font-medium">Không tìm thấy chuyến bay Vietnam Airlines nào khớp với bộ lọc.</p>
       </div>
     </div>
 
   </main>
 
-  <!-- Firebase Realtime Database Web SDK (Không giới hạn 50K lượt đọc) -->
+  <!-- Firebase Realtime Database Web SDK (Tách biệt 2 ngăn độc lập: daily_schedules & fr24_etas) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
@@ -183,10 +183,17 @@
     let selectedDate = '';
     let nextDateStr = '';
 
-    let unsubDoc1 = null;
-    let unsubDoc2 = null;
+    // Ngăn 1: Dữ liệu VIAGS (daily_schedules)
+    let unsubViags1 = null;
+    let unsubViags2 = null;
     let flightsDay1 = [];
     let flightsDay2 = [];
+
+    // Ngăn 2: Dữ liệu độc lập của cột Flightradar24 (fr24_etas)
+    let unsubFr24_1 = null;
+    let unsubFr24_2 = null;
+    let fr24MapDay1 = {};
+    let fr24MapDay2 = {};
 
     const datePicker = document.getElementById('datePicker');
     const now = new Date();
@@ -220,31 +227,42 @@
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    // Lắng nghe dữ liệu trực tiếp từ Realtime Database
+    // Lắng nghe song song 2 ngăn độc lập: daily_schedules (VIAGS) và fr24_etas (Flightradar24)
     function listenToFlights(chosenDate) {
       selectedDate = chosenDate;
       nextDateStr = calculateNextDate(chosenDate);
 
-      if (unsubDoc1) unsubDoc1();
-      if (unsubDoc2) unsubDoc2();
+      if (unsubViags1) unsubViags1();
+      if (unsubViags2) unsubViags2();
+      if (unsubFr24_1) unsubFr24_1();
+      if (unsubFr24_2) unsubFr24_2();
 
       document.getElementById('loadingStatus').classList.remove('hidden');
 
-      // 1. Lắng nghe gói ngày D
-      unsubDoc1 = onValue(ref(rtdb, `daily_schedules/${selectedDate}`), (snap1) => {
+      // 1. Ngăn VIAGS (daily_schedules)
+      unsubViags1 = onValue(ref(rtdb, `daily_schedules/${selectedDate}`), (snap1) => {
         const val1 = snap1.val();
         flightsDay1 = (val1 && Array.isArray(val1.flights)) ? val1.flights : [];
         combineAndRender();
-      }, (err) => {
-        console.error("Lỗi đọc Realtime Database:", err);
+      }, () => {
         document.getElementById('loadingStatus').classList.add('hidden');
       });
 
-      // 2. Lắng nghe gói ngày D+1
-      unsubDoc2 = onValue(ref(rtdb, `daily_schedules/${nextDateStr}`), (snap2) => {
+      unsubViags2 = onValue(ref(rtdb, `daily_schedules/${nextDateStr}`), (snap2) => {
         const val2 = snap2.val();
         flightsDay2 = (val2 && Array.isArray(val2.flights)) ? val2.flights : [];
         combineAndRender();
+      }, () => {});
+
+      // 2. Ngăn độc lập Flightradar24 (fr24_etas) - Không bao giờ bị phần mềm chính ghi đè
+      unsubFr24_1 = onValue(ref(rtdb, `fr24_etas/${selectedDate}`), (frSnap1) => {
+        fr24MapDay1 = frSnap1.val() || {};
+        renderFlights(false);
+      }, () => {});
+
+      unsubFr24_2 = onValue(ref(rtdb, `fr24_etas/${nextDateStr}`), (frSnap2) => {
+        fr24MapDay2 = frSnap2.val() || {};
+        renderFlights(false);
       }, () => {});
     }
 
@@ -252,6 +270,16 @@
       rawFlights = [...flightsDay1, ...flightsDay2];
       document.getElementById('loadingStatus').classList.add('hidden');
       renderFlights(true);
+    }
+
+    // Lấy giờ ETA độc lập từ ngăn fr24_etas
+    function getIndependentFr24Eta(flightObj) {
+      const fNo = (flightObj.flight_no || '').replace(/\s+/g, '').toUpperCase();
+      const mapToUse = (flightObj.date === selectedDate) ? fr24MapDay1 : fr24MapDay2;
+      if (mapToUse && mapToUse[fNo] && mapToUse[fNo] !== '--') {
+        return mapToUse[fNo];
+      }
+      return '--';
     }
 
     function renderFlights(shouldScroll = false) {
@@ -347,7 +375,7 @@
         }
         if (targetRowIndex === -1) {
           for (let i = 0; i < filtered.length; i++) {
-            const frEta = filtered[i].fr24_eta;
+            const frEta = getIndependentFr24Eta(filtered[i]);
             if (frEta && frEta !== '--') {
               targetRowIndex = i;
               break;
@@ -414,12 +442,14 @@
           ? `<span class="text-[11px] text-sky-600 font-semibold ml-1">(+1)</span>` 
           : '';
 
+        // CHỈ LẤY DỮ LIỆU TỪ NGĂN ĐỘC LẬP fr24_etas
+        const independentEta = getIndependentFr24Eta(f);
         let fr24Cell = '';
-        if (f.fr24_eta && f.fr24_eta !== '--') {
+        if (independentEta !== '--') {
           fr24Cell = `
             <div class="flex items-center justify-center space-x-1.5">
-              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ dự đáp (ETA) từ Flightradar24">
-                ${f.fr24_eta}
+              <span class="font-mono font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded border border-sky-300 text-xs shadow-xs" title="Giờ dự đáp (ETA) độc lập từ Flightradar24">
+                ${independentEta}
               </span>
               <a href="https://www.flightradar24.com/data/flights/${flightNoClean}" target="_blank" rel="noopener noreferrer" title="Xem radar" class="inline-flex items-center p-1 rounded text-yellow-500 hover:text-yellow-600 hover:bg-slate-100 transition">
                 <i class="fa-solid fa-radar text-xs"></i>
@@ -497,7 +527,7 @@
       renderFlights(false);
     };
 
-    // Nút Cập nhật hôm nay (VIAGS)
+    // Nút Cập nhật hôm nay (Phần mềm chính VIAGS - Không bao giờ đụng tới cột FR24)
     window.triggerRefreshToday = async () => {
       const btn = document.getElementById('btnRefresh');
       const icon = document.getElementById('refreshIcon');
@@ -544,7 +574,7 @@
       }
     };
 
-    // Nút Cập nhật độc lập Flightradar24
+    // Nút Cập nhật độc lập Flightradar24 (Chỉ cập nhật ngăn fr24_etas)
     window.triggerRefreshFR24 = async () => {
       const btn = document.getElementById('btnRefreshFR24');
       const icon = document.getElementById('refreshIconFR24');
@@ -562,7 +592,7 @@
         const data = await res.json();
 
         if (res.ok) {
-          let countdown = 35;
+          let countdown = 40;
           const timer = setInterval(() => {
             countdown--;
             if (countdown > 0) {
