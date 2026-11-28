@@ -12,7 +12,6 @@ on:
         default: 'status_only'
 
 # KHÓA CHỐNG XUNG ĐỘT & CHỐNG KẸT HÀNG ĐỢI:
-# Gom nhóm theo chế độ chạy để không bao giờ có 2 tiến trình cùng loại đè lên nhau
 concurrency:
   group: vna-sgn-scraper-${{ github.event.inputs.mode || 'scheduled_auto' }}
   cancel-in-progress: false
@@ -29,23 +28,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Cache Python & Playwright Chromium (Tăng tốc khởi động cho chu kỳ 60s)
-        id: cache-playwright
+      - name: Cache Playwright Chromium Browser
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-v1
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-chromium-v2
 
-      - name: Install dependencies (Lấy từ Cache siêu tốc)
+      - name: Install dependencies
         run: |
           pip install playwright firebase-admin pytz
           if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
-            if [ "${{ steps.cache-playwright.outputs.cache-hit }}" != "true" ]; then
-              playwright install chromium
-            fi
+            playwright install chromium
           fi
 
       - name: Run Scraper
