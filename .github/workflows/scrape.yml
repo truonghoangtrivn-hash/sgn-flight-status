@@ -2,14 +2,19 @@ name: Auto Scrape VIAGS Flights
 
 on:
   schedule:
-    # Chạy tự động định kỳ mỗi giờ
-    - cron: '0 * * * *'
+    # Chạy tự động định kỳ ngầm mỗi 20 phút kể cả khi tắt máy
+    - cron: '*/20 * * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Chế độ cào (today_only hoặc both_days)'
+        description: 'Chế độ cào (today_only, both_days, fr24_only)'
         required: false
         default: 'both_days'
+
+# Chống xung đột: Tách riêng luồng VIAGS và luồng FR24, không bao giờ kẹt nhau
+concurrency:
+  group: scrape-${{ github.event.inputs.mode || 'scheduled_auto' }}
+  cancel-in-progress: true
 
 jobs:
   scrape:
@@ -18,19 +23,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python (Có bộ nhớ đệm tốc độ cao)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies (Bỏ qua tải trình duyệt Chromium khi chỉ quét FR24)
         run: |
           pip install playwright firebase-admin pytz
-          playwright install chromium
+          if [ "${{ github.event.inputs.mode }}" != "fr24_only" ]; then
+            playwright install chromium
+          fi
 
       - name: Run Scraper
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          SCRAPE_MODE: ${{ github.event.inputs.mode || 'both_days' }}
+          SCRAPE_MODE: ${{ github.event.inputs.mode || 'scheduled_auto' }}
         run: |
           python scraper.py
